@@ -1,0 +1,3059 @@
+# PART 41 — IMPLEMENTATION CONTRACT
+
+## 1. Module Contract
+
+Every processing module follows:
+
+INPUT → PROCESS → STRUCTURED OUTPUT
+
+Modules read only declared inputs, publish structured updates, and do not directly mutate another module's private state or bypass WorldState, confidence tracking, or the update log.
+
+## 2. Module Responsibilities
+
+Primary responsibilities are separated into modules such as:
+
+- audio input
+- spectral/DSP analysis
+- transient and feature observation
+- perceptual weighting/masking
+- observation/object matching
+- persistent object tracking
+- prediction
+- grouping and layer graph
+- beat/tempo/groove/context
+- longer-term musical structure
+- semantic roles
+- style/subgenre interpretation
+- application-facing event output
+
+Helpers remain subordinate to their parent module.
+
+## 3. WorldState Ownership
+
+WorldState is the authoritative current state:
+
+WorldState
+├── clock
+├── observations
+├── objects
+├── relationships
+├── patterns
+├── phrases
+├── musical_context
+├── semantic_state
+├── style_state
+├── events
+└── update_log
+
+Only the world-state coordinator performs authoritative mutation. Modules produce proposed updates.
+
+## 4. Update Model
+
+A module produces an update containing, conceptually:
+
+- time
+- module
+- target
+- property
+- old value
+- new value
+- reason
+- evidence
+- confidence
+
+Applied updates become part of the decision history.
+
+## 5. Evidence Provenance
+
+Important inferences retain their supporting evidence.
+
+The system must be able to answer:
+
+- Why does this object exist?
+- Why was this observation assigned to it?
+- Why did its confidence change?
+- Why were layers grouped?
+- Why was a semantic role assigned?
+
+## 6. Observation
+
+Observation is temporary evidence and has no permanent identity.
+
+Conceptual fields:
+
+- id
+- timestamp
+- duration
+- frequency range
+- energy
+- features
+- confidence
+
+An observation can be matched, rejected, retained as evidence, or contribute to multiple hypotheses.
+
+## 7. SoundObject
+
+SoundObject is persistent identity.
+
+Conceptual fields:
+
+- id
+- created time
+- last seen
+- observations/history
+- features
+- state
+- confidence
+- prediction
+- relationships
+- semantic probabilities
+
+Temporary observation loss does not automatically terminate an object.
+
+## 8. Confidence
+
+Confidence is multidimensional. At minimum:
+
+- measurement confidence
+- identity confidence
+- prediction confidence
+- perceptual confidence
+- semantic confidence
+
+An aggregate confidence may be exposed to consumers but must not replace the underlying dimensions.
+
+## 9. Perceptual State
+
+Physical existence and perceptual availability are separate.
+
+An object can have high physical confidence and lower perceptual confidence.
+
+Masking modifies perceptual availability. It does not delete the physical object, its identity, or its history.
+
+Correct conceptual order:
+
+physical evidence
+→ object formation/tracking
+→ perceptual weighting
+→ downstream interpretation
+
+This preserves objects through masking and allows later recovery.
+
+## 10. Object Lifecycle
+
+Minimum lifecycle:
+
+candidate → active → occluded/predicted → recovering → active
+
+and eventually:
+
+fading → terminated
+
+Transitions require evidence and hysteresis; a single missing observation must not immediately destroy identity.
+
+## 11. Tracking
+
+Tracking maps observations to persistent objects.
+
+Matching should use multiple compatible cues, potentially including:
+
+- frequency trajectory
+- energy trajectory
+- envelope
+- harmonic structure
+- temporal position
+- modulation
+- spectral shape
+- embedding similarity
+- rhythmic relationship
+- object history
+
+No single cue defines identity in the general case.
+
+## 12. Prediction
+
+Prediction represents an expected future state, not a fact.
+
+Conceptual fields:
+
+- target object
+- expected time
+- expected state
+- expected features
+- confidence
+
+Predictions are confirmed, weakened, or replaced by later evidence.
+
+## 13. Grouping
+
+Grouping answers which observations/components belong together.
+
+Grouping is distinct from classification.
+
+Grouping can construct an object from multiple observations and can later be revised, split, or merged when evidence changes.
+
+## 14. Relationships
+
+Relationships are first-class state.
+
+Conceptual fields:
+
+- source
+- target
+- type
+- strength
+- confidence
+- temporal state
+- evidence
+
+Examples include:
+
+- supports
+- follows
+- duplicates
+- contrasts
+- belongs_to
+- modulates
+- replaces
+- transitions_to
+
+Relationships participate in grouping, prediction, musical context, semantic interpretation, and event generation.
+
+## 15. Computation Tiers
+
+Fast loop:
+- audio
+- spectral evidence
+- transient evidence
+- short-lived observations
+- timing-critical processing
+
+Medium loop:
+- objects
+- tracking
+- grouping
+- relationships
+- short-term musical state
+
+Slow loop:
+- semantic interpretation
+- style/subgenre
+- longer-term structure
+
+Slow processing must never block the realtime audio path.
+
+## 16. Adaptive Computation
+
+Increase computation when:
+
+- confidence is uncertain
+- objects conflict
+- grouping is ambiguous
+- masking hides important evidence
+- a transition is suspected
+- prediction error increases
+
+Reduce computation when state is stable.
+
+Reduced computation must not erase authoritative world state or history.
+
+## 17. Application Boundary
+
+The perception system produces world state, events, relationships, and confidence.
+
+It does not directly issue application commands such as visual flashes or scene changes.
+
+The application layer translates the perception output into actions.
+
+## 18. Trigger Stream
+
+The trigger stream is a simplified application-facing projection of WorldState.
+
+It contains events, state changes, and confidence.
+
+Example:
+
+event = groove_change
+time = 82.43
+intensity = 0.76
+confidence = 0.91
+
+Applications do not need to understand the complete internal perception graph.
+
+## 19. Application Isolation
+
+The same perception instance can feed VJ, lighting, visualization, analysis, or DAW consumers.
+
+Consumers may read, subscribe, and request information, but do not directly mutate authoritative perception state.
+
+## 20. Replayability
+
+Analysis must be replayable.
+
+Retain enough information to reproduce or inspect:
+
+- audio timing
+- observations
+- object updates
+- relationship updates
+- predictions
+- emitted events
+- decision records
+- module versions
+- configuration version
+
+The system must answer:
+
+What did the system believe at time T, and why?
+
+## 21. Replacement Rule
+
+Major algorithms must be replaceable behind stable interfaces.
+
+Examples:
+
+TransientDetector
+- SimpleDifferenceDetector
+- SpectralFluxDetector
+- MLTransientDetector
+
+ObjectMatcher
+- RuleBasedMatcher
+- WeightedMatcher
+- EmbeddingMatcher
+
+Downstream architecture must not depend on a particular implementation.
+
+## 22. AI Boundary
+
+AI is an optional component, not the architecture.
+
+Appropriate uses include:
+
+- embeddings
+- similarity
+- prediction
+- complex pattern discovery
+
+A learned component proposes evidence or scores. It does not bypass the normal world-state update and provenance pathway.
+
+## 23. Initial Implementation Boundary
+
+The first implementation should establish:
+
+audio
+→ features
+→ observations
+→ tracked SoundObjects
+→ events
+
+Do not make genre AI, large transformers, full source separation, or the VJ engine prerequisites for the foundation.
+
+Interfaces should nevertheless reserve space for later perception, grouping, prediction, musical context, semantics, style, AI, and application output.
+
+## 24. Success Criteria
+
+The first meaningful success is:
+
+audio arrives
+→ observations are created
+→ objects are created
+→ objects persist across frames
+→ repeated observations remain associated with the same object
+→ temporary evidence loss does not immediately destroy identity
+→ important object changes produce events
+
+The foundation is object continuity, not genre classification.
+
+## 25. Implementation Invariants
+
+I1. No observation has permanent identity.
+
+I2. Every persistent SoundObject has stable identity.
+
+I3. Masking cannot directly delete a SoundObject.
+
+I4. Important inferences carry confidence.
+
+I5. Important state changes are attributable to a module.
+
+I6. Important decisions retain evidence/provenance.
+
+I7. Applications cannot directly mutate authoritative WorldState.
+
+I8. Slow interpretation cannot block realtime processing.
+
+I9. Major algorithms are replaceable.
+
+I10. The system can replay and inspect previous beliefs.
+
+I11. Semantic labels remain probabilistic.
+
+I12. WorldState is more authoritative than any individual detector.
+
+## 26. Next Implementation Contract
+
+The next implementation section must define the exact schemas and interfaces for:
+
+Feature
+Observation
+SoundObject
+Relationship
+Prediction
+Update
+Decision
+Pattern
+Phrase
+MusicalContext
+Event
+WorldState
+
+For every type specify:
+
+- required fields
+- optional fields
+- ownership
+- update semantics
+- serialization
+- versioning
+- lifecycle
+- module interfaces
+
+These definitions constitute the internal type system of the implementation.
+
+# PART 42
+#
+# INTERNAL TYPE SYSTEM
+# =====================================================================
+
+#######################################################################
+# 1. GENERAL TYPE RULES
+#######################################################################
+
+All important data crossing module boundaries must use explicit typed
+records.
+
+A record has:
+
+id
+schema_version
+timestamp or time_range where applicable
+source/module provenance where applicable
+confidence where applicable
+payload
+
+Do not use anonymous dictionaries as the public interface between core
+modules.
+
+Internal temporary dictionaries are permitted inside a module.
+
+Public/internal-boundary objects must be typed.
+
+#######################################################################
+# 2. FEATURE
+#######################################################################
+
+Feature represents a measured or derived property.
+
+Fields:
+
+Feature
+    id
+    name
+    value
+    timestamp
+    duration
+    resolution
+    confidence
+    source_module
+    source_observation
+    schema_version
+
+Examples:
+
+spectral_centroid
+spectral_flux
+rms_energy
+pitch_estimate
+harmonicity
+attack_time
+decay_time
+release_time
+spectral_shape
+modulation_rate
+periodicity
+embedding
+
+A feature must never pretend to be more precise than its resolution.
+
+#######################################################################
+# 3. EMBEDDING
+#######################################################################
+
+Embedding represents a learned or numerical representation.
+
+Fields:
+
+Embedding
+    id
+    vector
+    model_id
+    model_version
+    timestamp
+    source
+    confidence
+
+Embedding is evidence.
+
+Embedding is not object identity.
+
+Changing the embedding model must not invalidate historical object IDs.
+
+#######################################################################
+# 4. OBSERVATION
+#######################################################################
+
+Observation:
+
+    id
+    schema_version
+    timestamp
+    duration
+    frequency_region
+    energy
+    features[]
+    embedding?
+    confidence
+    source
+    provenance
+
+The source identifies the producing detector/analysis module.
+
+The provenance identifies the underlying frame/window/evidence.
+
+#######################################################################
+# 5. REGION
+#######################################################################
+
+Region is a temporary grouping of physical observations.
+
+Fields:
+
+    id
+    observations[]
+    time_range
+    frequency_range
+    energy_curve
+    stability
+    confidence
+    provenance
+
+Region identity is temporary.
+
+A region is not automatically a SoundObject.
+
+#######################################################################
+# 6. LAYER
+#######################################################################
+
+Layer is a persistent physical component associated with an object.
+
+Fields:
+
+    id
+    parent_object
+    features[]
+    history
+    behaviour
+    embedding?
+    confidence
+    status
+
+Examples:
+
+kick click layer
+bass harmonic layer
+noise texture layer
+transient attack layer
+
+Layer identity may survive temporary observation loss.
+
+#######################################################################
+# 7. SOUNDOBJECT
+#######################################################################
+
+SoundObject:
+
+    id
+    schema_version
+    creation_time
+    last_update
+    status
+    layers[]
+    features[]
+    embedding?
+    role_candidates[]
+    history
+    relationships[]
+    prediction?
+    confidence
+    perceptual_state
+
+Status uses the established object states:
+
+NEW
+ACTIVE
+CHANGING
+HIDDEN
+UNCERTAIN
+ARCHIVED
+
+The object ID is stable for the object's lifetime.
+
+#######################################################################
+# 8. RELATIONSHIP
+#######################################################################
+
+Relationship:
+
+    id
+    schema_version
+    source_object
+    target_object
+    type
+    strength
+    confidence
+    history
+    evidence[]
+
+Relationship type must come from the controlled vocabulary unless a
+versioned extension is explicitly registered.
+
+#######################################################################
+# 9. PREDICTION
+#######################################################################
+
+Prediction:
+
+    id
+    target_object
+    expected_time
+    expected_state
+    expected_features[]
+    confidence
+    created_time
+    expiry_time
+    source_module
+
+Predictions expire.
+
+An expired prediction is historical evidence, not current truth.
+
+#######################################################################
+# 10. EVENT
+#######################################################################
+
+Event:
+
+    id
+    schema_version
+    time
+    type
+    source_objects[]
+    intensity
+    confidence
+    metadata
+    provenance
+
+Events represent meaningful changes or occurrences.
+
+An event is not a replacement for persistent state.
+
+#######################################################################
+# 11. UPDATE
+#######################################################################
+
+Update:
+
+    id
+    schema_version
+    time
+    module
+    target
+    property
+    old_value
+    new_value
+    reason
+    evidence[]
+    confidence
+
+Update records are append-only in the decision log.
+
+#######################################################################
+# 12. DECISION
+#######################################################################
+
+Decision:
+
+    id
+    schema_version
+    time
+    module
+    decision_type
+    target
+    selected_hypothesis
+    alternatives[]
+    evidence[]
+    confidence
+    reason
+    module_version
+
+Examples:
+
+object_match
+object_create
+object_merge
+object_split
+object_terminate
+relationship_create
+role_assignment
+event_emit
+
+#######################################################################
+# 13. PATTERN
+#######################################################################
+
+Pattern represents repeated or structured behavior.
+
+Fields:
+
+    id
+    pattern_type
+    members[]
+    onset_times[]
+    period?
+    stability
+    confidence
+    history
+
+Patterns can describe:
+
+repeated kick
+bass phrase
+rhythmic cell
+repeating texture
+harmonic movement
+
+Pattern identity is separate from the identity of its member objects.
+
+#######################################################################
+# 14. PHRASE
+#######################################################################
+
+Phrase represents a longer temporal grouping.
+
+Fields:
+
+    id
+    start_time
+    end_time
+    members[]
+    pattern_references[]
+    structural_role?
+    confidence
+    history
+
+Phrase detection is downstream from lower-level object continuity.
+
+#######################################################################
+# 15. MUSICAL CONTEXT
+#######################################################################
+
+MusicalContext contains interpreted temporal/musical state.
+
+Fields may include:
+
+    tempo
+    beat_phase
+    beat_confidence
+    bar_position
+    meter_hypotheses[]
+    groove_state
+    syncopation
+    section
+    phrase_position
+    tension
+    repetition_state
+    harmonic_context
+    confidence
+
+Musical context is probabilistic and revisable.
+
+#######################################################################
+# 16. WORLDSTATE
+#######################################################################
+
+WorldState:
+
+    schema_version
+    world_id
+    current_time
+    observations[]
+    regions[]
+    layers[]
+    objects[]
+    relationships[]
+    predictions[]
+    patterns[]
+    phrases[]
+    musical_context
+    semantic_state
+    style_state
+    events[]
+    memory_state
+    system_confidence
+    update_cursor
+
+WorldState is the authoritative snapshot.
+
+#######################################################################
+# 17. COLLECTION OWNERSHIP
+#######################################################################
+
+Each collection has an owner.
+
+Observations:
+    observation/detector subsystem
+
+Regions:
+    physical grouping subsystem
+
+Layers:
+    object/grouping subsystem
+
+SoundObjects:
+    world-state/object tracker
+
+Relationships:
+    relationship/world-state subsystem
+
+Predictions:
+    tracking/prediction subsystem
+
+Patterns:
+    musical-context subsystem
+
+Phrases:
+    structure subsystem
+
+Events:
+    event subsystem
+
+WorldState:
+    world-state coordinator
+
+#######################################################################
+# 18. IMMUTABILITY RULE
+#######################################################################
+
+Historical observations, decisions, updates and events must not be
+silently rewritten.
+
+Current object state may change.
+
+Historical records remain historical.
+
+#######################################################################
+# 19. ID RULES
+#######################################################################
+
+Every persistent entity receives a stable unique ID.
+
+IDs must not encode semantic meaning.
+
+Bad:
+
+bass_object_1
+
+Good:
+
+object_7f31...
+
+Semantic labels belong in role/semantic fields.
+
+#######################################################################
+# 20. SCHEMA VERSIONING
+#######################################################################
+
+Every serialized public/core record has schema_version.
+
+Schema changes must define:
+
+old version
+new version
+migration
+compatibility policy
+
+Historical records remain readable.
+
+# =====================================================================
+# PART 43
+#
+# SERIALIZATION AND VERSIONING
+# =====================================================================
+
+#######################################################################
+# 1. SERIALIZATION
+#######################################################################
+
+Use a human-readable representation for development and debugging.
+
+JSON is the default interchange representation.
+
+Binary formats may be introduced for performance after the semantic schema
+is stable.
+
+The semantic schema must remain independent of serialization format.
+
+#######################################################################
+# 2. SERIALIZED WORLD SNAPSHOT
+#######################################################################
+
+A snapshot contains:
+
+metadata
+schema version
+world ID
+current time
+objects
+relationships
+predictions
+musical context
+semantic/style state
+event cursor
+configuration version
+module versions
+
+Temporary caches are excluded unless explicitly marked replay-critical.
+
+#######################################################################
+# 3. EVENT LOG
+#######################################################################
+
+The event/update log is append-oriented.
+
+Each record contains:
+
+sequence_number
+timestamp
+module
+record_type
+target
+payload
+schema_version
+module_version
+
+Sequence numbers must be monotonic within a session.
+
+#######################################################################
+# 4. CHECKPOINTS
+#######################################################################
+
+Long sessions periodically create checkpoints.
+
+Checkpoint:
+
+    world snapshot
+    event/update cursor
+    module versions
+    configuration version
+
+Replay starts from the nearest valid checkpoint and processes subsequent
+records.
+
+#######################################################################
+# 5. VERSIONING
+#######################################################################
+
+Version these independently:
+
+project version
+schema version
+module version
+model version
+configuration version
+experiment version
+
+Do not collapse them into one number.
+
+#######################################################################
+# 6. MIGRATION
+#######################################################################
+
+Every schema migration must be deterministic.
+
+A migration must not invent unavailable historical information.
+
+If a field did not exist historically, migration uses:
+- explicit default
+- null/unknown
+- derived value only when derivation is deterministic
+
+#######################################################################
+# 7. CONFIGURATION VERSIONING
+#######################################################################
+
+Every analysis session records the exact configuration version.
+
+Changing a threshold or algorithm must create a new configuration version.
+
+Historical runs remain reproducible.
+
+# =====================================================================
+# PART 44
+#
+# MODULE INTERFACES
+# =====================================================================
+
+#######################################################################
+# 1. INTERFACE RULE
+#######################################################################
+
+Modules communicate through explicit interfaces.
+
+The interface defines:
+
+inputs
+outputs
+timing
+ownership
+failure behavior
+versioning
+
+#######################################################################
+# 2. AUDIO INPUT
+#######################################################################
+
+AudioInput:
+
+    start()
+    stop()
+    read()
+    timestamp()
+
+Output:
+
+AudioFrame
+
+AudioFrame:
+
+    samples
+    sample_rate
+    channels
+    start_time
+    duration
+    sequence_number
+
+#######################################################################
+# 3. FEATURE ANALYSIS
+#######################################################################
+
+FeatureAnalyzer:
+
+    process(AudioFrame) -> FeatureBatch
+
+FeatureBatch:
+
+    timestamp
+    duration
+    features[]
+    confidence
+    source_module
+
+#######################################################################
+# 4. DETECTOR
+#######################################################################
+
+Detector:
+
+    process(FeatureBatch) -> ObservationBatch
+
+ObservationBatch:
+
+    timestamp
+    observations[]
+    source_module
+    module_version
+
+A detector detects candidate evidence.
+
+It does not own persistent SoundObjects.
+
+#######################################################################
+# 5. PERCEPTUAL MODEL
+#######################################################################
+
+PerceptualModel:
+
+    evaluate(observation/object state, context)
+        -> PerceptualUpdate
+
+PerceptualUpdate may modify:
+
+perceptual_confidence
+saliance
+attention relevance
+masking state
+
+It must not delete physical identity.
+
+#######################################################################
+# 6. MATCHER
+#######################################################################
+
+ObjectMatcher:
+
+    score(observation, object, context)
+        -> MatchScore
+
+MatchScore:
+
+    observation_id
+    object_id
+    cue_scores[]
+    aggregate_score
+    confidence
+    explanation
+
+The matcher proposes correspondence.
+
+The tracker owns the final assignment.
+
+#######################################################################
+# 7. TRACKER
+#######################################################################
+
+ObjectTracker:
+
+    update(observations, WorldState)
+        -> TrackingUpdateSet
+
+Responsibilities:
+
+- object creation
+- observation assignment
+- continuity
+- lifecycle updates
+- disappearance handling
+- prediction integration
+
+#######################################################################
+# 8. GROUPER
+#######################################################################
+
+ObjectGrouper:
+
+    update(objects, observations, context)
+        -> GroupingUpdateSet
+
+Responsibilities:
+
+- layer grouping
+- object construction
+- split hypotheses
+- merge hypotheses
+- hierarchy updates
+
+#######################################################################
+# 9. PREDICTOR
+#######################################################################
+
+Predictor:
+
+    predict(object, context)
+        -> Prediction
+
+    evaluate(prediction, observation)
+        -> PredictionUpdate
+
+Prediction must remain explicitly uncertain.
+
+#######################################################################
+# 10. MUSICAL CONTEXT
+#######################################################################
+
+MusicContextAnalyzer:
+
+    update(WorldState)
+        -> MusicalContextUpdate
+
+Potential submodules:
+
+BeatDetector
+TempoEstimator
+MeterEstimator
+GrooveAnalyzer
+PhraseDetector
+StructureAnalyzer
+
+Each produces structured evidence.
+
+#######################################################################
+# 11. SEMANTIC INTERPRETER
+#######################################################################
+
+SemanticInterpreter:
+
+    interpret(objects, relationships, musical_context)
+        -> SemanticUpdate
+
+Output remains probabilistic.
+
+Example:
+
+role_candidates:
+
+kick:
+    kick = 0.91
+    percussion = 0.07
+    unknown = 0.02
+
+#######################################################################
+# 12. STYLE INTERPRETER
+#######################################################################
+
+StyleInterpreter:
+
+    interpret(musical_context, objects, relationships)
+        -> StyleUpdate
+
+Output:
+
+genre_hypotheses[]
+subgenre_hypotheses[]
+style_vector
+confidence
+
+Style interpretation does not alter physical observation.
+
+#######################################################################
+# 13. EVENT GENERATOR
+#######################################################################
+
+EventGenerator:
+
+    update(previous_world, current_world)
+        -> EventBatch
+
+Events are derived from state changes.
+
+Examples:
+
+object_created
+object_removed
+object_changed
+beat
+bar
+section_change
+groove_change
+transition
+tension_change
+layer_split
+layer_merge
+
+#######################################################################
+# 14. APPLICATION OUTPUT
+#######################################################################
+
+OutputAdapter:
+
+    publish(EventBatch, WorldStateView)
+
+Possible transports:
+
+websocket
+OSC
+MIDI
+JSON stream
+shared-memory/internal API
+
+The perception core remains transport-independent.
+
+# =====================================================================
+# PART 45
+#
+# PROCESSING SCHEDULER
+# =====================================================================
+
+#######################################################################
+# 1. SCHEDULER PRINCIPLE
+#######################################################################
+
+The scheduler coordinates multiple time scales.
+
+No single giant loop should execute every module at the same rate.
+
+#######################################################################
+# 2. FAST LOOP
+#######################################################################
+
+Fast loop:
+
+audio acquisition
+buffering
+FFT/spectral analysis
+energy
+transient evidence
+short-lived observations
+
+Target behavior:
+low latency and deterministic timing.
+
+#######################################################################
+# 3. MEDIUM LOOP
+#######################################################################
+
+Medium loop:
+
+observation matching
+object updates
+grouping
+relationship updates
+prediction
+short-term musical context
+
+Runs at a rate appropriate to the relevant phenomena.
+
+#######################################################################
+# 4. SLOW LOOP
+#######################################################################
+
+Slow loop:
+
+semantic interpretation
+style
+genre/subgenre
+long-term structure
+phrase-level interpretation
+expensive embedding/model operations
+
+Slow loop may lag temporarily.
+
+It must never block the fast loop.
+
+#######################################################################
+# 5. PRIORITY
+#######################################################################
+
+When compute is constrained:
+
+1. audio integrity
+2. physical evidence
+3. object continuity
+4. timing-critical musical state
+5. grouping
+6. relationships
+7. semantic interpretation
+8. style interpretation
+9. expensive optional AI
+
+#######################################################################
+# 6. BACKPRESSURE
+#######################################################################
+
+When a slow module falls behind:
+
+- retain latest relevant state
+- discard redundant intermediate requests where safe
+- never block audio
+- record dropped work
+- preserve critical updates
+
+#######################################################################
+# 7. DETERMINISM
+#######################################################################
+
+Given identical:
+
+audio
+configuration
+module versions
+model versions
+initial state
+
+the deterministic portions should produce identical results.
+
+Sources of nondeterminism must be explicitly identified.
+
+# =====================================================================
+# PART 46
+#
+# MEMORY, HISTORY, AND REPLAY
+# =====================================================================
+
+#######################################################################
+# 1. MEMORY LEVELS
+#######################################################################
+
+Memory is divided into:
+
+working memory
+object memory
+relationship memory
+pattern memory
+session memory
+project knowledge
+
+#######################################################################
+# 2. WORKING MEMORY
+#######################################################################
+
+Contains recent observations and short-lived hypotheses.
+
+Aggressive expiry is permitted.
+
+#######################################################################
+# 3. OBJECT MEMORY
+#######################################################################
+
+Stores object evolution:
+
+features
+state changes
+confidence changes
+relationships
+prediction outcomes
+semantic interpretation changes
+
+#######################################################################
+# 4. RELATIONSHIP MEMORY
+#######################################################################
+
+Stores how relationships changed over time.
+
+Example:
+
+Bass supports Kick
+    confidence rises
+    confidence falls
+    relationship disappears
+
+This history may influence future interpretation.
+
+#######################################################################
+# 5. PATTERN MEMORY
+#######################################################################
+
+Stores repeated structures:
+
+rhythmic patterns
+phrase patterns
+object recurrence
+arrangement patterns
+
+#######################################################################
+# 6. REPLAY
+#######################################################################
+
+Replay modes:
+
+AUDIO_REPLAY
+    re-run analysis from audio
+
+OBSERVATION_REPLAY
+    skip physical analysis
+
+WORLD_REPLAY
+    replay recorded state updates
+
+EVENT_REPLAY
+    replay only application-facing outputs
+
+Each mode must document which modules are active.
+
+#######################################################################
+# 7. DEBUG SNAPSHOTS
+#######################################################################
+
+Debug snapshots should expose:
+
+current objects
+object confidence
+active layers
+relationships
+predictions
+musical context
+recent decisions
+recent events
+
+#######################################################################
+# 8. WHY LOGGING EXISTS
+#######################################################################
+
+Logging is not merely for errors.
+
+It is for understanding model behavior.
+
+Every major unexpected result should be traceable to:
+
+input
+observation
+match
+grouping
+state update
+decision
+output
+
+# =====================================================================
+# PART 47
+#
+# CONFIGURATION POLICY
+# =====================================================================
+
+#######################################################################
+# 1. CORE PRINCIPLE
+#######################################################################
+
+Do not expose every internal constant as a user configuration parameter.
+
+Most values should be:
+
+FIXED_CONSTANT
+DERIVED_PARAMETER
+RUNTIME_ADAPTIVE
+MODULE_POLICY
+PROJECT_POLICY
+
+Only genuinely meaningful choices become configuration.
+
+#######################################################################
+# 2. FIXED CONSTANTS
+#######################################################################
+
+Examples:
+
+sample-rate assumptions
+FFT defaults
+numerical safeguards
+serialization constants
+
+These are implementation constants, not tuning controls.
+
+#######################################################################
+# 3. DERIVED PARAMETERS
+#######################################################################
+
+Whenever possible derive thresholds from observed data.
+
+Examples:
+
+background energy
+noise floor
+variance
+tempo
+object stability
+historical confidence
+
+Do not create manual knobs when a stable derivation exists.
+
+#######################################################################
+# 4. RUNTIME ADAPTIVE PARAMETERS
+#######################################################################
+
+Examples:
+
+confidence decay
+prediction horizon
+grouping tolerance
+analysis depth
+masking influence
+
+These may adapt to current conditions.
+
+#######################################################################
+# 5. PROJECT POLICIES
+#######################################################################
+
+True project-level policies include:
+
+latency target
+compute budget
+false-positive vs false-negative preference
+output event policy
+maximum object count
+
+These are explicit configuration.
+
+#######################################################################
+# 6. GENRE/SUBGENRE PARAMETERS
+#######################################################################
+
+Do not duplicate the complete pipeline for every genre/subgenre.
+
+The common physical/perceptual/object architecture remains shared.
+
+Style profiles modify interpretation and weighting.
+
+Subgenre-specific behavior is represented as data/models where possible.
+
+#######################################################################
+# 7. CONFIG FILE
+#######################################################################
+
+config.yaml should contain only stable configuration.
+
+It should not become a dump of every internal variable.
+
+Every configuration field must have:
+
+name
+type
+default
+allowed range
+meaning
+owner
+version
+
+# =====================================================================
+# PART 48
+#
+# TESTING AND VALIDATION
+# =====================================================================
+
+#######################################################################
+# 1. TESTING LAYERS
+#######################################################################
+
+Test:
+
+audio
+features
+observations
+matching
+tracking
+grouping
+relationships
+prediction
+musical context
+semantics
+events
+serialization
+replay
+performance
+
+#######################################################################
+# 2. UNIT TESTS
+#######################################################################
+
+Every core module has deterministic unit tests.
+
+Examples:
+
+feature extraction
+match scoring
+object lifecycle
+merge
+split
+confidence update
+prediction expiration
+relationship creation
+event generation
+
+#######################################################################
+# 3. PROPERTY TESTS
+#######################################################################
+
+Important invariants are tested as properties.
+
+Examples:
+
+masking never directly deletes physical identity.
+
+object IDs remain stable during valid tracking.
+
+an observation cannot become a persistent object ID.
+
+events do not mutate historical records.
+
+replay does not silently change recorded decisions.
+
+#######################################################################
+# 4. GOLDEN TESTS
+#######################################################################
+
+Maintain selected audio fixtures with expected:
+
+observations
+objects
+object continuity
+major events
+musical state
+
+Small numerical differences may be tolerated where algorithms are
+explicitly nondeterministic, but identity/state invariants must remain
+stable.
+
+#######################################################################
+# 5. ADVERSARIAL AUDIO
+#######################################################################
+
+Test difficult cases:
+
+dense layering
+similar timbres
+masking
+overlapping attacks
+rapid alternation
+tempo changes
+syncopation
+reverb
+distortion
+compression
+lossy encoding
+noise
+silence
+very dense arrangements
+
+#######################################################################
+# 6. OBJECT CONTINUITY
+#######################################################################
+
+Measure:
+
+identity continuity
+fragmentation
+false merges
+false splits
+occlusion recovery
+prediction accuracy
+
+#######################################################################
+# 7. GROUPING
+#######################################################################
+
+Measure:
+
+correct layer grouping
+false grouping
+missed grouping
+split recovery
+merge recovery
+
+#######################################################################
+# 8. MUSICAL CONTEXT
+#######################################################################
+
+Measure:
+
+beat stability
+tempo stability
+phrase consistency
+groove stability
+section detection
+transition detection
+
+#######################################################################
+# 9. APPLICATION TESTS
+#######################################################################
+
+Verify:
+
+same perception state can feed multiple applications.
+
+application failure does not corrupt perception.
+
+output transport failure does not stop analysis.
+
+# =====================================================================
+# PART 49
+#
+# REALTIME PERFORMANCE CONTRACT
+# =====================================================================
+
+#######################################################################
+# 1. LATENCY
+#######################################################################
+
+Latency must be measured explicitly.
+
+Track:
+
+audio capture latency
+analysis latency
+observation latency
+tracking latency
+event latency
+output transport latency
+end-to-end latency
+
+#######################################################################
+# 2. CPU
+#######################################################################
+
+CPU-intensive work should be concentrated in:
+
+feature extraction
+tracking/grouping
+optional AI
+
+Fast audio processing receives priority.
+
+#######################################################################
+# 3. GPU
+#######################################################################
+
+GPU is optional.
+
+Use it for:
+
+embeddings
+large learned models
+batch analysis
+
+Do not make GPU availability a requirement for the core deterministic
+world model.
+
+#######################################################################
+# 4. MEMORY
+#######################################################################
+
+Bound:
+
+working observation history
+temporary buffers
+embedding caches
+debug logging
+
+Persistent project/session data may be stored separately.
+
+#######################################################################
+# 5. FAILURE
+#######################################################################
+
+If an optional module fails:
+
+- preserve the last valid state where appropriate
+- lower relevant confidence
+- record the failure
+- continue other modules
+
+The audio pipeline must remain alive whenever possible.
+
+# =====================================================================
+# PART 50
+#
+# IMPLEMENTATION ORDER
+# =====================================================================
+
+#######################################################################
+# PHASE 0 — FOUNDATION
+#######################################################################
+
+Create:
+
+repository
+configuration
+logging
+schema/version infrastructure
+WorldState
+basic tests
+
+#######################################################################
+# PHASE 1 — AUDIO
+#######################################################################
+
+Create:
+
+audio input
+buffer
+clock
+frame abstraction
+
+#######################################################################
+# PHASE 2 — PHYSICAL ANALYSIS
+#######################################################################
+
+Create:
+
+FFT
+energy
+spectral features
+transient observations
+
+#######################################################################
+# PHASE 3 — OBSERVATION DEBUGGER
+#######################################################################
+
+Visualize:
+
+waveform
+spectrum
+observations
+time/frequency regions
+
+#######################################################################
+# PHASE 4 — OBJECT TRACKING
+#######################################################################
+
+Create:
+
+matcher
+tracker
+lifecycle
+object history
+prediction
+
+This is the first major perception milestone.
+
+#######################################################################
+# PHASE 5 — GROUPING
+#######################################################################
+
+Create:
+
+regions
+layers
+grouping
+split/merge logic
+object hierarchy
+
+#######################################################################
+# PHASE 6 — RELATIONSHIPS
+#######################################################################
+
+Create:
+
+relationship graph
+relationship confidence
+relationship history
+
+#######################################################################
+# PHASE 7 — PERCEPTION
+#######################################################################
+
+Create:
+
+loudness
+masking
+attention
+salience
+perceptual confidence
+
+Masking remains non-destructive.
+
+#######################################################################
+# PHASE 8 — MUSICAL CONTEXT
+#######################################################################
+
+Create:
+
+beat
+tempo
+meter
+groove
+repetition
+phrase
+structure
+
+#######################################################################
+# PHASE 9 — SEMANTICS
+#######################################################################
+
+Create probabilistic:
+
+roles
+function
+interaction
+higher-level objects
+
+#######################################################################
+# PHASE 10 — STYLE
+#######################################################################
+
+Create:
+
+genre hypotheses
+subgenre hypotheses
+style vectors
+style confidence
+
+#######################################################################
+# PHASE 11 — AI
+#######################################################################
+
+Add optional:
+
+embeddings
+similarity
+self-supervised representations
+learned prediction
+
+Only after deterministic interfaces are stable.
+
+#######################################################################
+# PHASE 12 — APPLICATION OUTPUT
+#######################################################################
+
+Create:
+
+event stream
+WebSocket/OSC/etc.
+VJ adapter
+debug client
+
+# =====================================================================
+# PART 51
+#
+# CODEBASE STRUCTURE
+# =====================================================================
+
+auditory_world_model/
+│
+├── README.md
+├── PROJECT_SPEC.md
+├── requirements.txt
+├── config.yaml
+├── main.py
+│
+├── core/
+│   ├── world.py
+│   ├── objects.py
+│   ├── observations.py
+│   ├── features.py
+│   ├── relationships.py
+│   ├── predictions.py
+│   ├── events.py
+│   ├── confidence.py
+│   ├── updates.py
+│   └── schemas.py
+│
+├── audio/
+│   ├── input.py
+│   ├── buffer.py
+│   └── clock.py
+│
+├── analysis/
+│   ├── fft.py
+│   ├── energy.py
+│   ├── spectral.py
+│   └── transient.py
+│
+├── perception/
+│   ├── loudness.py
+│   ├── masking.py
+│   ├── attention.py
+│   └── salience.py
+│
+├── tracking/
+│   ├── matcher.py
+│   ├── tracker.py
+│   └── prediction.py
+│
+├── grouping/
+│   ├── regions.py
+│   ├── layer_graph.py
+│   └── grouping.py
+│
+├── music/
+│   ├── beat.py
+│   ├── tempo.py
+│   ├── groove.py
+│   ├── phrase.py
+│   └── structure.py
+│
+├── semantic/
+│   ├── roles.py
+│   └── interactions.py
+│
+├── style/
+│   ├── genre.py
+│   ├── subgenre.py
+│   └── style.py
+│
+├── ai/
+│   ├── embeddings.py
+│   ├── similarity.py
+│   └── models.py
+│
+├── output/
+│   ├── events.py
+│   ├── websocket.py
+│   └── adapters.py
+│
+├── replay/
+│   ├── recorder.py
+│   ├── loader.py
+│   └── replay.py
+│
+├── debug/
+│   ├── visualizer.py
+│   ├── inspector.py
+│   └── snapshots.py
+│
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   ├── golden/
+│   └── fixtures/
+│
+└── examples/
+
+Module names may evolve, but responsibilities and boundaries must remain.
+
+# =====================================================================
+# PART 52
+#
+# CODE GENERATION CONTRACT
+# =====================================================================
+
+#######################################################################
+# 1. PURPOSE
+#######################################################################
+
+Code generated from this specification must implement the architecture,
+not merely produce a demonstration.
+
+#######################################################################
+# 2. NO ARCHITECTURAL DRIFT
+#######################################################################
+
+The coding model must not:
+
+- replace the world model with a monolithic neural network
+- remove persistent object identity
+- turn observations into permanent objects
+- make masking destructive
+- move application logic into perception
+- silently collapse relationships into labels
+- remove provenance
+- remove replayability
+- make AI mandatory without an explicit architecture change
+
+#######################################################################
+# 3. IMPLEMENTATION PRIORITY
+#######################################################################
+
+When implementation is incomplete, preserve the architecture and use
+explicit stubs/interfaces rather than collapsing future modules into
+unstructured shortcuts.
+
+#######################################################################
+# 4. CODE QUALITY
+#######################################################################
+
+Generated code must include:
+
+type hints
+docstrings for public interfaces
+tests
+structured logging
+schema validation where appropriate
+clear module boundaries
+
+Avoid unnecessary abstraction where the architecture does not require it.
+
+#######################################################################
+# 5. DEPENDENCY POLICY
+#######################################################################
+
+The initial technology stack follows the existing specification:
+
+Python
+numpy
+scipy
+soundfile
+librosa
+sounddevice
+asyncio
+
+Optional later:
+
+pytorch
+onnx
+faiss
+
+Visualization:
+
+matplotlib
+plotly
+websocket
+
+Critical realtime components may later move to C++, Rust or CUDA.
+
+#######################################################################
+# 6. GENERATED CODE MUST RUN
+#######################################################################
+
+The first implementation must:
+
+- install
+- import
+- execute
+- process a real audio fixture
+- create observations
+- track objects
+- emit events
+- run tests
+
+#######################################################################
+# 7. NO FAKE IMPLEMENTATION
+#######################################################################
+
+Do not create placeholder functions that claim to perform analysis while
+returning fabricated values.
+
+When a subsystem is not implemented, expose an explicit stub and mark it
+as unavailable.
+
+# =====================================================================
+# PART 53
+#
+# COMPLETE IMPLEMENTATION REQUIREMENTS
+# =====================================================================
+
+#######################################################################
+# 1. REQUIRED FOUNDATION
+#######################################################################
+
+The implementation is complete only when the foundation supports:
+
+audio input
+frame timing
+feature extraction
+observation creation
+object tracking
+object lifecycle
+history
+confidence
+updates
+events
+serialization
+replay
+
+#######################################################################
+# 2. REQUIRED PERCEPTION
+#######################################################################
+
+The architecture must support:
+
+loudness
+perceptual masking
+attention/salience
+without destructive deletion.
+
+#######################################################################
+# 3. REQUIRED OBJECT MODEL
+#######################################################################
+
+Must support:
+
+multiple layers per object
+stable identity
+temporary disappearance
+prediction
+split
+merge
+relationships
+history
+
+#######################################################################
+# 4. REQUIRED MUSICAL MODEL
+#######################################################################
+
+Must support:
+
+beat
+tempo
+groove
+repetition
+phrase
+structure
+
+The musical layer is built on object continuity rather than replacing it.
+
+#######################################################################
+# 5. REQUIRED SEMANTIC MODEL
+#######################################################################
+
+Must support probabilistic:
+
+instrument/role candidates
+functional roles
+object interaction
+higher-level interpretation
+
+#######################################################################
+# 6. REQUIRED STYLE MODEL
+#######################################################################
+
+Must support:
+
+genre hypotheses
+subgenre hypotheses
+style signatures
+confidence
+multiple competing interpretations
+
+Style must not rewrite physical evidence.
+
+#######################################################################
+# 7. REQUIRED OUTPUT
+#######################################################################
+
+Must support:
+
+state stream
+event stream
+confidence
+timestamps
+source-object references
+
+Output adapters remain replaceable.
+
+# =====================================================================
+# PART 54
+#
+# LOCKED ARCHITECTURAL DECISIONS
+# =====================================================================
+
+The following decisions are locked unless explicitly revised by a future
+architecture change.
+
+1. The system models an auditory world rather than only classifying audio.
+
+2. SoundObjects are persistent entities.
+
+3. Observations are temporary evidence.
+
+4. Physical evidence is retained separately from perceptual availability.
+
+5. Perceptual masking is non-destructive.
+
+6. Loudness and masking can affect perceptual confidence/salience without
+   deleting physical objects.
+
+7. Object identity is not identical to sound shape.
+
+8. Embeddings are evidence, not identity.
+
+9. Grouping is probabilistic.
+
+10. Layers are components of objects.
+
+11. Relationships are first-class state.
+
+12. Object hierarchy is distinct from raw frequency grouping.
+
+13. Object tracking provides temporal continuity.
+
+14. Prediction is part of continuity.
+
+15. Semantic interpretation is probabilistic.
+
+16. Musical context is downstream from object/world state.
+
+17. Genre/subgenre interpretation modifies interpretation rather than
+    replacing the common physical architecture.
+
+18. Applications consume state/events and do not own perception.
+
+19. AI is optional and replaceable.
+
+20. The core architecture remains deterministic/inspectable even when
+    learned components are added.
+
+21. WorldState is authoritative.
+
+22. Important decisions retain provenance.
+
+23. Realtime processing is separated from slower interpretation.
+
+24. The implementation must support replay.
+
+25. The architecture must survive replacement of individual algorithms.
+
+# =====================================================================
+# PART 55
+#
+# OPEN DECISIONS
+# =====================================================================
+
+The following are implementation choices that should not be silently
+invented by a coding model.
+
+1. Exact sample-rate targets for each deployment mode.
+
+2. Exact realtime latency target.
+
+3. Exact maximum simultaneous object count.
+
+4. Exact persistence duration for different object classes.
+
+5. Exact output transport(s) required by the first deployment.
+
+6. Exact embedding model.
+
+7. Exact training/self-supervised corpus if embeddings are enabled.
+
+8. Exact hardware acceleration policy.
+
+9. Exact genre/style knowledge representation.
+
+10. Exact configuration ranges after benchmark results exist.
+
+When an open decision blocks implementation, use a documented default,
+mark it as provisional, and isolate it behind configuration.
+
+Do not convert an open decision into a hidden architectural assumption.
+
+# =====================================================================
+# PART 56
+#
+# FINAL IMPLEMENTATION CHECKLIST
+# =====================================================================
+
+Before declaring the implementation complete, verify:
+
+#######################################################################
+# ARCHITECTURE
+#######################################################################
+
+[ ] WorldState exists and owns authoritative state.
+[ ] Modules have explicit boundaries.
+[ ] Observations are separate from objects.
+[ ] Object identity persists.
+[ ] Layers exist separately from objects.
+[ ] Relationships are first-class.
+[ ] Prediction exists.
+[ ] History exists.
+[ ] Confidence is multidimensional.
+[ ] Provenance exists.
+
+#######################################################################
+# PERCEPTION
+#######################################################################
+
+[ ] Loudness is represented.
+[ ] Masking is represented.
+[ ] Masking is non-destructive.
+[ ] Attention/salience is separate from physical existence.
+
+#######################################################################
+# TRACKING
+#######################################################################
+
+[ ] Matching is multi-cue.
+[ ] Object creation is explicit.
+[ ] Object termination is hysteretic.
+[ ] Temporary disappearance is supported.
+[ ] Prediction participates in continuity.
+[ ] Split/merge decisions are logged.
+
+#######################################################################
+# MUSICAL CONTEXT
+#######################################################################
+
+[ ] Beat state exists.
+[ ] Tempo state exists.
+[ ] Groove state exists.
+[ ] Repetition state exists.
+[ ] Phrase/structure state exists.
+
+#######################################################################
+# SEMANTICS
+#######################################################################
+
+[ ] Roles are probabilistic.
+[ ] Multiple interpretations are possible.
+[ ] Style does not corrupt physical state.
+
+#######################################################################
+# REALTIME
+#######################################################################
+
+[ ] Audio path is non-blocking.
+[ ] Slow modules cannot stop the audio path.
+[ ] Latency is measured.
+[ ] CPU/GPU responsibilities are explicit.
+[ ] Failure of optional modules is isolated.
+
+#######################################################################
+# REPLAY
+#######################################################################
+
+[ ] Updates are logged.
+[ ] Decisions are logged.
+[ ] Module versions are recorded.
+[ ] Configuration versions are recorded.
+[ ] Snapshots can be created.
+[ ] Sessions can be replayed.
+
+#######################################################################
+# APPLICATION OUTPUT
+#######################################################################
+
+[ ] Events have timestamps.
+[ ] Events reference source objects.
+[ ] Events have confidence.
+[ ] Output adapters are replaceable.
+[ ] Application code cannot directly mutate WorldState.
+
+#######################################################################
+# CODE
+#######################################################################
+
+[ ] Repository structure exists.
+[ ] Core schemas are typed.
+[ ] Unit tests exist.
+[ ] Integration tests exist.
+[ ] Golden fixtures exist.
+[ ] Real audio can be processed.
+[ ] Objects can be tracked.
+[ ] Events can be emitted.
+[ ] The MVP runs end-to-end.
+
+#######################################################################
+# FINAL RULE
+#######################################################################
+
+The implementation is not considered successful merely because it
+produces plausible labels.
+
+It is successful when it maintains a coherent, inspectable, temporally
+continuous auditory world model from which labels, musical interpretation,
+and visual/application events can be derived.
+
+END OF COMPLETE IMPLEMENTATION SPECIFICATION
+
+# PART 57 — NUMERICAL IMPLEMENTATION CONTRACT
+
+## 1. Number classification
+
+Every behavioral number is classified as one of:
+
+LOCKED — architectural requirement.
+DEFAULT — initial implementation value; change requires a versioned decision.
+DERIVED — calculated from other parameters; not independently configured.
+ADAPTIVE — computed at runtime from current state.
+TUNABLE — deliberately benchmarked/configured.
+OPEN — not yet established; provisional default must be explicit.
+
+The coding model must never silently invent a LOCKED or DEFAULT value.
+
+## 2. Master audio parameters
+
+Initial DEFAULTS:
+
+sample_rate = 48000 Hz
+channels = 2
+sample_format = float32
+
+If the input device uses another sample rate, the system either operates at
+that rate or performs an explicit versioned sample-rate conversion. Silent
+resampling is prohibited.
+
+## 3. Device buffer
+
+Initial DEFAULT:
+
+device_buffer = 256 samples
+
+At 48 kHz this is 5.333 ms. Actual device buffer size and actual sample rate
+must be recorded at runtime because hardware, drivers, buffers and algorithmic
+processing all contribute to latency. citeturn0search6turn0search0
+
+## 4. Fast analysis hop
+
+DEFAULT:
+
+fast_hop = 256 samples
+
+At 48 kHz:
+
+fast_period = 5.333 ms
+
+The fast path must not fall behind this cadence.
+
+## 5. Short FFT
+
+DEFAULT:
+
+short_fft_size = 1024
+short_fft_hop = 256
+window = Hann
+
+At 48 kHz:
+
+window_duration = 21.333 ms
+frequency_bin_spacing = 46.875 Hz
+
+FFT size is separate from device buffer size. Larger windows provide finer
+frequency discrimination at the cost of temporal resolution/latency. citeturn0search7turn0search2
+
+## 6. Long FFT
+
+DEFAULT:
+
+long_fft_size = 4096
+long_fft_hop = 1024
+
+At 48 kHz:
+
+window_duration = 85.333 ms
+frequency_bin_spacing = 11.719 Hz
+
+The long FFT must not block the critical fast path.
+
+## 7. Fast-loop deadline
+
+Initial engineering target:
+
+p99 fast-loop compute time <= 50% of fast_period
+
+At 48 kHz / 256 samples:
+
+p99 compute target <= 2.667 ms
+
+Deadline misses must be counted and logged.
+
+## 8. End-to-end event latency
+
+Initial targets:
+
+p50 perception-to-event <= 20 ms
+p95 <= 30 ms
+p99 <= 50 ms
+
+These are engineering acceptance targets, not claims about every hardware
+configuration. Buffer size directly affects when realtime audio commands can
+be consumed. citeturn0search1
+
+## 9. Context windows
+
+DEFAULTS:
+
+short_observation_context = 100 ms
+medium_observation_context = 500 ms
+tracking_context = 2 s
+
+These are evidence-retention contexts, not object lifetimes.
+
+## 10. Object persistence
+
+DEFAULTS:
+
+candidate_confirmation_window = 50 ms
+prediction_horizon = 100 ms
+recovery_window = 250 ms
+uncertain_window = 500 ms
+archive_delay = 2000 ms
+
+One missing observation must not terminate identity.
+
+## 11. Match thresholds
+
+Initial normalized-score defaults:
+
+strong_match >= 0.80
+candidate_match >= 0.55
+reject_match < 0.40
+
+Scores from 0.40 through 0.549... are ambiguous and must not automatically
+produce a confident assignment.
+
+Thresholds are TUNABLE and require benchmark validation.
+
+## 12. Match hysteresis
+
+DEFAULTS:
+
+promotion_margin = 0.10
+demotion_margin = 0.10
+minimum_assignment_duration = 30 ms
+
+An established identity receives hysteresis protection.
+
+## 13. Confidence decay
+
+Initial half-life defaults when unsupported by new evidence:
+
+measurement_confidence_half_life = 100 ms
+prediction_confidence_half_life = 150 ms
+identity_confidence_half_life = 500 ms
+semantic_confidence_half_life = 2000 ms
+
+The decay function must be explicit and versioned.
+
+## 14. Masking
+
+DEFAULTS:
+
+mask_attack = 20 ms
+mask_release = 150 ms
+
+Masking changes perceptual confidence/salience. It does not delete physical
+identity, history, or observations already retained as evidence.
+
+## 15. Grouping tolerances
+
+Initial DEFAULTS:
+
+temporal_group_tolerance = 30 ms
+strong_temporal_group_tolerance = 10 ms
+frequency_overlap_tolerance = 0.15 normalized band distance
+
+These values are TUNABLE.
+
+## 16. Split/merge hysteresis
+
+DEFAULTS:
+
+merge_confirmation = 3 consecutive compatible updates
+split_confirmation = 3 consecutive incompatible updates
+minimum_split_duration = 30 ms
+minimum_merge_duration = 30 ms
+
+A single contradictory frame must not cause structural identity change.
+
+## 17. Prediction error
+
+DEFAULTS:
+
+prediction_warning_threshold = 0.25 normalized error
+prediction_failure_threshold = 0.50 normalized error
+
+Three consecutive prediction failures trigger elevated tracking work.
+
+## 18. Tempo range
+
+DEFAULTS:
+
+tempo_min = 40 BPM
+tempo_max = 240 BPM
+
+Multiple tempo hypotheses are permitted.
+
+## 19. Beat confirmation
+
+DEFAULTS:
+
+beat_confirmation_count = 4 beats
+beat_phase_confidence_threshold = 0.70
+tempo_confidence_threshold = 0.70
+
+Provisional beat events must be distinguishable from confirmed beat events.
+
+## 20. Event debounce
+
+DEFAULTS:
+
+same_event_debounce = 20 ms
+section_event_debounce = 250 ms
+groove_event_debounce = 100 ms
+
+## 21. Object/resource limits
+
+DEFAULTS:
+
+soft_object_limit = 256
+hard_object_limit = 1024
+working_observation_limit = 4096
+
+The limits protect resources; they are not semantic limits on how many sounds
+may exist in the represented world.
+
+## 22. Slow-module cadence
+
+DEFAULTS:
+
+semantic_update_period = 100 ms
+style_update_period = 500 ms
+long_structure_update_period = 1000 ms
+embedding_update_period = 100 ms
+maximum_ai_inference_time = 20 ms
+
+Slow work must never block the audio path.
+
+## 23. Parameter registry
+
+Every behavioral number must be registered with:
+
+parameter_id
+name
+value
+unit
+classification
+owner
+minimum
+maximum
+default
+configuration_key
+introduced_version
+last_validated_version
+validation_test
+
+A number without a unit or owner is invalid.
+
+# PART 58 — DETECTION, TRACKING, AND QUALITY CONTRACT
+
+Initial engineering acceptance targets:
+
+major transient recall >= 90%
+major transient precision >= 85%
+identity continuity >= 95%
+false merge rate <= 2%
+false split rate <= 5%
+temporary-loss recovery >= 90%
+major-event recall >= 90%
+major-event precision >= 90%
+duplicate-event rate <= 1%
+
+Realtime:
+
+fast-loop deadline miss rate <= 0.1%
+p95 perception-to-event <= 30 ms
+p99 perception-to-event <= 50 ms
+
+These are TARGETS, not claims of achieved performance. Benchmark results must
+record precision, recall, false positives, false negatives, continuity, merge
+errors, split errors, latency percentiles, CPU, RAM and deadline misses.
+
+# PART 59 — ALGORITHM CONTRACT
+
+Every algorithm specifies:
+
+inputs
+outputs
+persistent state
+initialization
+update rule
+expiration
+failure behavior
+confidence behavior
+computational complexity
+latency contribution
+
+Detector produces observations and never owns persistent SoundObject identity.
+Matcher produces correspondence evidence. Tracker owns final assignment.
+Prediction never overwrites measured state.
+
+## Matching
+
+Initial conceptual score:
+
+score =
+    w_frequency * frequency_score
+  + w_energy * energy_score
+  + w_envelope * envelope_score
+  + w_harmonic * harmonic_score
+  + w_temporal * temporal_score
+  + w_embedding * embedding_score
+  + w_prediction * prediction_score
+
+Weights are TUNABLE and versioned. They must not be silently changed by the
+coding model.
+
+## Tracking
+
+Required order:
+
+new observation
+→ candidate generation
+→ multi-cue scoring
+→ hysteresis
+→ object update
+→ prediction update
+→ confidence update
+→ Decision record
+→ Update record
+
+## Object creation
+
+Initial DEFAULT:
+
+observation confidence >= 0.55 may create a candidate.
+
+Candidate becomes ACTIVE after sufficient confirmation, initially defined as
+>= 0.70 confirmation confidence sustained for at least 50 ms, or equivalent
+multi-observation evidence explicitly recorded by the tracker.
+
+## Object termination
+
+ACTIVE → HIDDEN when evidence temporarily disappears but prediction remains
+plausible.
+
+HIDDEN → UNCERTAIN when prediction error exceeds the failure threshold.
+
+UNCERTAIN → ARCHIVED only after recovery evidence fails and the recovery/
+archive timers expire.
+
+## Split
+
+Requires persistent incompatible trajectories or multimodal evidence for at
+least 30 ms by default.
+
+## Merge
+
+Requires compatible trajectories, temporal behavior and spectral evidence for
+at least 30 ms by default.
+
+The merge Decision retains provenance to both previous identities.
+
+# PART 60 — LATENCY AND COMPUTATION BUDGET
+
+Latency is decomposed into:
+
+capture_buffer
+analysis_window
+algorithmic_delay
+scheduler_delay
+tracking_delay
+event_publication_delay
+
+Initial budget targets:
+
+capture/buffer <= 6 ms
+fast processing compute <= 3 ms
+tracking compute <= 5 ms
+event publication <= 5 ms
+
+These components may overlap; end-to-end latency must therefore also be
+measured directly rather than inferred by addition.
+
+Initial queue limits:
+
+fast_queue_max = 4 audio blocks
+medium_queue_max = 8 state updates
+slow_queue_max = 4 requests
+
+On overflow:
+
+fast queue: record overrun and preserve realtime processing.
+medium queue: coalesce redundant state updates.
+slow queue: coalesce to the latest relevant state.
+
+Unlimited queue growth is prohibited.
+
+# PART 61 — COMPUTATIONAL ESCALATION
+
+Escalate analysis when any of the following occurs:
+
+tracking confidence < 0.55
+prediction error > 0.25
+grouping ambiguity > 0.30
+major transition probability > 0.70
+
+Initial escalation levels:
+
+LEVEL 0 — normal analysis
+LEVEL 1 — additional feature extraction
+LEVEL 2 — long-window/richer matching
+LEVEL 3 — embedding/expensive model
+LEVEL 4 — multi-hypothesis analysis
+
+Return toward LEVEL 0 after confidence >= 0.80 for at least 500 ms, unless a
+higher level is still required by another active condition.
+
+# PART 62 — BENCHMARK CONTRACT
+
+Benchmark sets must cover:
+
+isolated sounds
+polyphonic mixes
+dense mixes
+rhythmic material
+harmonic material
+transitions
+silence
+noise
+masking
+similar timbres
+tempo changes
+
+Where labels are available, benchmark annotations include:
+
+object identity
+onset
+offset
+frequency region
+layer membership
+relationship
+beat
+tempo
+section
+semantic role
+
+Every run records:
+
+audio hash
+configuration version
+module versions
+model versions
+hardware
+OS
+runtime version
+run timestamp
+
+A parameter change is accepted only when quality remains acceptable and the
+latency/resource contract is not violated.
+
+# PART 63 — FAILURE AND RECOVERY CONTRACT
+
+Detector failure:
+
+retain valid state where appropriate
+lower relevant confidence
+record failure
+continue independent modules
+
+Matcher failure:
+
+retain existing objects
+allow temporary prediction
+restrict new assignments if necessary
+lower tracking confidence
+record failure
+
+AI failure:
+
+must never terminate the deterministic pipeline.
+
+Output failure:
+
+must never corrupt WorldState.
+
+Clock discontinuity:
+
+must be detected and must never silently mix incompatible time bases.
+
+Resource exhaustion priority:
+
+1. disable expensive optional AI
+2. reduce slow analysis
+3. reduce debug logging
+4. reduce low-priority hypotheses
+5. preserve fast physical analysis
+6. preserve object continuity
+
+# PART 64 — FINAL NUMERICAL IMPLEMENTATION GATE
+
+The implementation specification is not numerically complete until every
+behavioral parameter is classified as:
+
+LOCKED
+DEFAULT
+DERIVED
+ADAPTIVE
+TUNABLE
+OPEN
+
+and has an explicit unit, owner, range where applicable, configuration key
+where applicable, and validation method.
+
+OPEN values may use provisional defaults, but those defaults must be visibly
+marked provisional.
+
+The coding model must never encounter an unexplained behavioral constant and
+silently turn it into a permanent architecture decision.
+
+END OF NUMERICAL IMPLEMENTATION CONTRACT
