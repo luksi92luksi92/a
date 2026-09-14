@@ -7,9 +7,9 @@ cue untouched.  It replaces the existing post-hoc same-hop grouping rule
 with a stable profile-based grouping stage.
 
 The original grouping rule mostly asked: "did two objects fire on the same
-hop?".  That is too weak for a musical source model: kick body/click can be
+hop?". That is too weak for a musical source model: kick body/click can be
 slightly staggered, bass notes can alternate pitch, a pad can be sustained,
-and hi-hat energy can move between bands.  The replacement groups tracked
+and hi-hat energy can move between bands. The replacement groups tracked
 objects using several persistent cues:
 
 * log-frequency/register
@@ -19,7 +19,7 @@ objects using several persistent cues:
 * probabilistic role compatibility (weak prior only)
 * pairwise temporal/harmonic coherence
 
-Clusters are disjoint and non-destructive.  A layer references its member
+Clusters are disjoint and non-destructive. A layer references its member
 SoundObjects; it never mutates or deletes their identities/history.
 
 Run from the same directory as the original file:
@@ -67,9 +67,9 @@ _spec.loader.exec_module(awm)
 class ImprovedGroupingEngine(awm.GroupingEngine):
     """Group persistent tracked objects into coherent perceptual layers.
 
-    This is intentionally a *grouping* model, not a source separator.  It
+    This is intentionally a *grouping* model, not a source separator. It
     operates on already tracked objects and preserves the raw objects as
-    evidence.  It also avoids the original single-link/co-fire failure mode
+    evidence. It also avoids the original single-link/co-fire failure mode
     that allowed musical simultaneity to masquerade as shared source.
     """
 
@@ -77,7 +77,7 @@ class ImprovedGroupingEngine(awm.GroupingEngine):
     MIN_OBJECT_AGE_MS = 120.0
     MIN_OBJECT_HISTORY = 8
 
-    # Cluster acceptance.  These are deliberately conservative because false
+    # Cluster acceptance. These are deliberately conservative because false
     # merging is more damaging to identity than leaving a fragment separate.
     PAIR_THRESHOLD = 0.66
     CLUSTER_THRESHOLD = 0.72
@@ -141,7 +141,7 @@ class ImprovedGroupingEngine(awm.GroupingEngine):
         if not active:
             active = [h for _, h, _ in hist]
 
-        freqs = self._finite(h.frequency_hz for h in active if h.frequency_hz > 0, 1.0)
+        freqs = self._finite((h.frequency_hz for h in active if h.frequency_hz > 0), 1.0)
         harmonic = self._finite(h.confidence.get("prediction", 0.5) * 0.0 + 0.0 for h in [])
         # History does not store harmonicity directly; the current physical
         # signature is the authoritative persistent value.
@@ -182,7 +182,7 @@ class ImprovedGroupingEngine(awm.GroupingEngine):
         if phase_hist.sum() > 0:
             phase_hist /= np.linalg.norm(phase_hist) + 1e-9
 
-        # Weak semantic context.  It is deliberately not an instrument label
+        # Weak semantic context. It is deliberately not an instrument label
         # gate: it only influences similarity after physical evidence agrees.
         role = np.asarray([
             obj.role_scores.kick,
