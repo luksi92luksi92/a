@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with corrected transient detection."""
+"""EDM reverse-DAW entry point with corrected transient detection and plot."""
 from __future__ import annotations
 
+import argparse
 import numpy as np
 
 import edm_reverse_daw_core as _core
@@ -47,5 +48,45 @@ def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
 
 _core.awm.PhysicalAnalyzer.detect_transients = staticmethod(_detect_transients_fixed)
 
+
+def main():
+    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with corrected transient detection.")
+    parser.add_argument("audio", nargs="?", default=None)
+    parser.add_argument("--export-json", default=None)
+    parser.add_argument("--plot", default="auditory_world_model_activity.png")
+    args = parser.parse_args()
+
+    params = _core.awm.Parameters()
+    source = _core.awm.AudioSource(params)
+    audio, _ = source.load(args.audio)
+    model = _core.awm.AuditoryWorldModel(params)
+    model.run(audio, use_stem_separation=False)
+
+    edm = _core.EDMReverseDAW(model.world)
+    snapshot = edm.run()
+
+    print("\n" + "=" * 96)
+    print("EDM REVERSE-DAW LAYER")
+    print("=" * 96)
+    print(f"time={snapshot['time']:.3f}s")
+    print(f"source hypotheses={len(snapshot['source_hypotheses'])}")
+    print(f"elements={len(snapshot['elements'])}")
+    print(f"patterns={len(snapshot['patterns'])}")
+    print(f"sections={len(snapshot['sections'])}")
+    arrangement = snapshot["arrangement"]
+    print(f"arrangement={'yes' if arrangement else 'not enough structural evidence'}")
+    if arrangement:
+        print(f"  confidence={arrangement['confidence']:.3f}")
+        print(f"  sections={len(arrangement['section_ids'])}")
+    if args.export_json:
+        path = edm.export_json(args.export_json)
+        print(f"exported={path}")
+
+    # Same decomposition-vs-input-audio plot used by the grouping runner.
+    model.plot_activity(save_path=args.plot)
+    print(f"\nActivity plot saved to: {args.plot}")
+    return model
+
+
 if __name__ == "__main__":
-    _core.main()
+    main()
