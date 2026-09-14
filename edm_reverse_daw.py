@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with improved transient detection and plot."""
+"""EDM reverse-DAW entry point with improved transient detection, Demucs, and progression output."""
 from __future__ import annotations
 
 import argparse
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
+
+# Keep the analysis readable: suppress the per-object ObjectTracker birth/match
+# spam while retaining the explicit stage/progression output below.
+logging.getLogger("ObjectTracker").setLevel(logging.WARNING)
 
 
 def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
@@ -66,25 +71,57 @@ def main():
     parser.add_argument("--plot", default="auditory_world_model_activity.png")
     args = parser.parse_args()
 
+    print("\n" + "=" * 96)
+    print("AUDITORY WORLD MODEL — EDM REVERSE-DAW")
+    print("=" * 96)
+    print("[1/7] Loading audio...")
+
     params = _core.awm.Parameters()
-    _core.awm.print_parameter_registry(params)
     source = _core.awm.AudioSource(params)
     audio, _ = source.load(args.audio)
+
     model = _core.awm.AuditoryWorldModel(params)
+
+    # Demucs/HTDemucs runs inside the AWM stem-separation stage.  Make that
+    # stage explicit in the console instead of hiding it behind model.run().
+    print("[2/7] Demucs coarse source separation: RUNNING")
+    print("        stems -> drum / bass / other / vocal cues")
     model.run(audio, use_stem_separation=True)
+    print("[2/7] Demucs coarse source separation: DONE")
 
-    # Restore the foundation progress/state printout, but intentionally omit
-    # the large per-object summary.
-    model.print_events(limit=80)
-    model.print_masked_bass_recovery_trace()
-    model.print_groove_state()
-    model.print_structure_state()
-    model.print_role_summary()
-    model.print_style_summary()
+    print("[3/7] Physical analysis + transient detection: DONE")
+    print("[4/7] SoundObject tracking / perceptual state: DONE")
 
+    print("[5/7] EDM elements / patterns / sections / arrangement...")
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
+    print("[5/7] EDM structural layer: DONE")
 
+    print("[6/7] Evaluation / export state: DONE")
+    print("[7/7] Generating activity plot...")
+
+    if args.export_json:
+        path = edm.export_json(args.export_json)
+        print(f"exported={path}")
+
+    # Make the shared AWM decomposition/spectrogram plot much wider so closely
+    # spaced transient markers can be inspected at higher time resolution.
+    original_subplots = plt.subplots
+    def wide_subplots(*plot_args, **plot_kwargs):
+        if plot_kwargs.get("figsize") == (14, 9):
+            plot_kwargs["figsize"] = (32, 10)
+        return original_subplots(*plot_args, **plot_kwargs)
+    plt.subplots = wide_subplots
+    try:
+        model.plot_activity(save_path=args.plot)
+    finally:
+        plt.subplots = original_subplots
+
+    print(f"Activity plot saved to: {args.plot}")
+
+    # Restore the progression/state printouts that were present before the
+    # object-level print spam was introduced.  Do NOT print object summaries
+    # or per-object tracker lines here.
     print("\n" + "=" * 96)
     print("EDM REVERSE-DAW LAYER")
     print("=" * 96)
@@ -98,21 +135,22 @@ def main():
     if arrangement:
         print(f"  confidence={arrangement['confidence']:.3f}")
         print(f"  sections={len(arrangement['section_ids'])}")
-    if args.export_json:
-        path = edm.export_json(args.export_json)
-        print(f"exported={path}")
 
-    original_subplots = plt.subplots
-    def wide_subplots(*plot_args, **plot_kwargs):
-        if plot_kwargs.get("figsize") == (14, 9):
-            plot_kwargs["figsize"] = (32, 10)
-        return original_subplots(*plot_args, **plot_kwargs)
-    plt.subplots = wide_subplots
-    try:
-        model.plot_activity(save_path=args.plot)
-    finally:
-        plt.subplots = original_subplots
-    print(f"\nActivity plot saved to: {args.plot}")
+    # Keep the useful foundation progression/state reports without the huge
+    # object-by-object summary/event dump.
+    for label, method_name in (
+        ("Masking / bass recovery", "print_masked_bass_recovery_trace"),
+        ("Groove", "print_groove_state"),
+        ("Structure", "print_structure_state"),
+        ("Roles", "print_role_summary"),
+        ("Style", "print_style_summary"),
+    ):
+        method = getattr(model, method_name, None)
+        if method is not None:
+            print(f"\n--- {label} ---")
+            method()
+
+    print("\nAnalysis complete.")
     return model
 
 
