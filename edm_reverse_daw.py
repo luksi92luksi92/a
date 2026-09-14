@@ -18,11 +18,9 @@ def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
     if n == 0:
         return onset_strength, is_transient
 
-    # Two causal baselines: a short one catches local changes, while the long
-    # one prevents sustained loud passages from becoming the reference level.
     short_history = max(12, int(round(0.28 * sr / max(hop, 1))))
     long_history = max(short_history + 4, int(round(0.90 * sr / max(hop, 1))))
-    refractory = max(1, int(round(0.008 * sr / max(hop, 1))))  # ~8 ms
+    refractory = max(1, int(round(0.008 * sr / max(hop, 1))))
     last_trigger = -refractory
 
     for i in range(n):
@@ -41,19 +39,12 @@ def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
                 return (float(x[i]) - float(np.mean(hist))) / max(float(np.std(hist)), 0.003)
             return 0.0
 
-        z_short = robust_z(hs)
-        z_long = robust_z(hl)
-        # Prefer whichever baseline exposes the onset more strongly.
-        z = max(z_short, z_long)
+        z = max(robust_z(hs), robust_z(hl))
         onset_strength[i] = np.float32(z)
 
-        # A hit can occupy a small plateau rather than a strict one-frame peak.
-        # Accept the strongest frame within a ±2-frame neighborhood.
         left = max(0, i - 2)
         right = min(n, i + 3)
         local_peak = x[i] >= np.max(x[left:right]) - 1e-12
-
-        # Recover quieter hits while requiring a meaningful local rise.
         previous = float(np.max(x[max(0, i - 3):i])) if i > 0 else float(x[i])
         local_rise = float(x[i]) - previous
         strong_enough = z >= 1.35 or (z >= 1.05 and local_rise >= 0.025)
@@ -79,7 +70,7 @@ def main():
     source = _core.awm.AudioSource(params)
     audio, _ = source.load(args.audio)
     model = _core.awm.AuditoryWorldModel(params)
-    model.run(audio, use_stem_separation=False)
+    model.run(audio, use_stem_separation=True)
 
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
@@ -101,8 +92,6 @@ def main():
         path = edm.export_json(args.export_json)
         print(f"exported={path}")
 
-    # Make the shared AWM decomposition/spectrogram plot much wider so closely
-    # spaced transient markers can be inspected at higher time resolution.
     original_subplots = plt.subplots
     def wide_subplots(*plot_args, **plot_kwargs):
         if plot_kwargs.get("figsize") == (14, 9):
