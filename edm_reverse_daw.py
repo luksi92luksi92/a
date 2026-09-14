@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with corrected transient detection and plot."""
+"""EDM reverse-DAW entry point with improved transient detection and plot."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ import edm_reverse_daw_core as _core
 
 
 def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
-    """Robust causal transient detector: log flux + median/MAD + local peaks."""
+    """Multi-scale adaptive onset detector designed to recover weaker EDM hits."""
     x = np.log1p(np.maximum(np.asarray(flux, dtype=np.float64), 0.0))
     n = x.size
     onset_strength = np.zeros(n, dtype=np.float32)
@@ -17,29 +17,47 @@ def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
     if n == 0:
         return onset_strength, is_transient
 
-    history_frames = max(16, int(round(0.75 * sr / max(hop, 1))))
-    refractory = max(1, int(round(0.018 * sr / max(hop, 1))))
-    threshold = 1.75
+    # Two causal baselines: a short one catches local changes, while the long
+    # one prevents sustained loud passages from becoming the reference level.
+    short_history = max(12, int(round(0.28 * sr / max(hop, 1))))
+    long_history = max(short_history + 4, int(round(0.90 * sr / max(hop, 1))))
+    refractory = max(1, int(round(0.008 * sr / max(hop, 1))))  # ~8 ms
     last_trigger = -refractory
 
     for i in range(n):
-        lo = max(0, i - history_frames)
-        hist = x[lo:i]
-        if hist.size >= 8:
-            baseline = float(np.median(hist))
-            mad = float(np.median(np.abs(hist - baseline)))
-            scale = max(1.4826 * mad, 1e-6)
-        elif hist.size > 1:
-            baseline = float(np.mean(hist))
-            scale = max(float(np.std(hist)), 1e-6)
-        else:
-            baseline = float(x[i])
-            scale = 1e-6
+        lo_s = max(0, i - short_history)
+        lo_l = max(0, i - long_history)
+        hs = x[lo_s:i]
+        hl = x[lo_l:i]
 
-        z = (float(x[i]) - baseline) / scale
+        def robust_z(hist):
+            if hist.size >= 6:
+                med = float(np.median(hist))
+                mad = float(np.median(np.abs(hist - med)))
+                scale = max(1.4826 * mad, 0.003)
+                return (float(x[i]) - med) / scale
+            if hist.size >= 2:
+                return (float(x[i]) - float(np.mean(hist))) / max(float(np.std(hist)), 0.003)
+            return 0.0
+
+        z_short = robust_z(hs)
+        z_long = robust_z(hl)
+        # Prefer whichever baseline exposes the onset more strongly.
+        z = max(z_short, z_long)
         onset_strength[i] = np.float32(z)
-        local_peak = i == 0 or (x[i] >= x[i - 1] and (i + 1 >= n or x[i] >= x[i + 1]))
-        if i >= 8 and z >= threshold and local_peak and (i - last_trigger) >= refractory:
+
+        # A hit can occupy a small plateau rather than a strict one-frame peak.
+        # Accept the strongest frame within a ±2-frame neighborhood.
+        left = max(0, i - 2)
+        right = min(n, i + 3)
+        local_peak = x[i] >= np.max(x[left:right]) - 1e-12
+
+        # Recover quieter hits while requiring a meaningful local rise.
+        previous = float(np.max(x[max(0, i - 3):i])) if i > 0 else float(x[i])
+        local_rise = float(x[i]) - previous
+        strong_enough = z >= 1.35 or (z >= 1.05 and local_rise >= 0.025)
+
+        if i >= 6 and strong_enough and local_peak and (i - last_trigger) >= refractory:
             is_transient[i] = True
             last_trigger = i
 
@@ -50,7 +68,7 @@ _core.awm.PhysicalAnalyzer.detect_transients = staticmethod(_detect_transients_f
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with corrected transient detection.")
+    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with improved transient detection.")
     parser.add_argument("audio", nargs="?", default=None)
     parser.add_argument("--export-json", default=None)
     parser.add_argument("--plot", default="auditory_world_model_activity.png")
@@ -82,7 +100,6 @@ def main():
         path = edm.export_json(args.export_json)
         print(f"exported={path}")
 
-    # Same decomposition-vs-input-audio plot used by the grouping runner.
     model.plot_activity(save_path=args.plot)
     print(f"\nActivity plot saved to: {args.plot}")
     return model
