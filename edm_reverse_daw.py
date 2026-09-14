@@ -67,10 +67,20 @@ def main():
     args = parser.parse_args()
 
     params = _core.awm.Parameters()
+    _core.awm.print_parameter_registry(params)
     source = _core.awm.AudioSource(params)
     audio, _ = source.load(args.audio)
     model = _core.awm.AuditoryWorldModel(params)
     model.run(audio, use_stem_separation=True)
+
+    # Restore the foundation progress/state printout, but intentionally omit
+    # the large per-object summary.
+    model.print_events(limit=80)
+    model.print_masked_bass_recovery_trace()
+    model.print_groove_state()
+    model.print_structure_state()
+    model.print_role_summary()
+    model.print_style_summary()
 
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
