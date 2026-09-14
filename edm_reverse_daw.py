@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import numpy as np
+import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
 
@@ -100,7 +101,18 @@ def main():
         path = edm.export_json(args.export_json)
         print(f"exported={path}")
 
-    model.plot_activity(save_path=args.plot)
+    # Make the shared AWM decomposition/spectrogram plot much wider so closely
+    # spaced transient markers can be inspected at higher time resolution.
+    original_subplots = plt.subplots
+    def wide_subplots(*plot_args, **plot_kwargs):
+        if plot_kwargs.get("figsize") == (14, 9):
+            plot_kwargs["figsize"] = (32, 10)
+        return original_subplots(*plot_args, **plot_kwargs)
+    plt.subplots = wide_subplots
+    try:
+        model.plot_activity(save_path=args.plot)
+    finally:
+        plt.subplots = original_subplots
     print(f"\nActivity plot saved to: {args.plot}")
     return model
 
