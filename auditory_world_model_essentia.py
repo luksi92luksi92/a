@@ -61,7 +61,7 @@ class EssentiaTimbreAdapter:
 
     REQUIRED_ALGORITHMS = (
         "Windowing", "Spectrum", "Centroid", "FlatnessDB", "RollOff",
-        "Flux", "Crest", "HFC", "ZeroCrossingRate", "MFCC",
+        "Crest", "HFC", "ZeroCrossingRate", "MFCC",
         "SpectralPeaks", "HarmonicPeaks", "Inharmonicity", "SpectralContrast",
     )
 
@@ -88,7 +88,6 @@ class EssentiaTimbreAdapter:
         self._centroid = es.Centroid(range=self.sample_rate * 0.5)
         self._flatness = es.FlatnessDB()
         self._rolloff = es.RollOff(sampleRate=self.sample_rate, cutoff=0.85)
-        self._flux = es.Flux()
         self._crest = es.Crest()
         self._hfc = es.HFC()
         self._zcr = es.ZeroCrossingRate()
@@ -121,6 +120,25 @@ class EssentiaTimbreAdapter:
         variance = float(np.sum(mag * (freqs - centroid_hz) ** 2) / total)
         return float(np.sqrt(max(variance, 0.0)))
 
+    @staticmethod
+    def _spectral_flux(current: np.ndarray, previous: Optional[np.ndarray]) -> float:
+        """Portable standard spectral-flux calculation.
+
+        Essentia's standard Flux binding in the installed dev wheels accepts
+        one spectrum argument, not (current, previous). The actual temporal
+        difference is therefore computed here from consecutive Essentia
+        spectra; this preserves the intended feature rather than dropping it.
+        """
+        if previous is None:
+            return 0.0
+        cur = np.asarray(current, dtype=np.float64)
+        prev = np.asarray(previous, dtype=np.float64)
+        n = min(cur.size, prev.size)
+        if n == 0:
+            return 0.0
+        delta = np.maximum(cur[:n] - prev[:n], 0.0)
+        return float(np.sqrt(np.sum(delta * delta)))
+
     def _frame_features(self, frame: np.ndarray, time: float) -> EssentiaTimbreFrame:
         mono = np.asarray(frame, dtype=np.float32)
         if mono.size < self.FRAME_SIZE:
@@ -134,7 +152,7 @@ class EssentiaTimbreAdapter:
         spread = self._spectral_spread(spectrum, centroid)
         flatness = float(self._flatness(spectrum))
         rolloff = float(self._rolloff(spectrum))
-        flux = float(self._flux(spectrum, self._prev_spectrum)) if self._prev_spectrum is not None else 0.0
+        flux = self._spectral_flux(spectrum, self._prev_spectrum)
         crest = float(self._crest(spectrum))
         hfc = float(self._hfc(spectrum))
         zcr = float(self._zcr(mono))
