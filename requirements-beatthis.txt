@@ -1,1 +1,5 @@
 beat-this==1.1.0
+tqdm
+einops
+soxr
+rotary-embedding-torch
