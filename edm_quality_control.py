@@ -6,6 +6,8 @@ changing the authoritative physical evidence. In particular:
 - estimates tempo from repeated transient intervals instead of trusting a
   single drifting groove state;
 - removes one-occurrence foundation patterns from the report;
+- removes trailing/too-short section candidates from the report;
+- makes pattern-change wording consistent with the confirmed pattern set;
 - recalculates groove-derived style state after tempo correction.
 """
 from __future__ import annotations
@@ -41,10 +43,7 @@ def _tempo_votes(times: Sequence[float], min_bpm: float = 80.0,
             bpm = 60.0 / (float(d) * multiple)
             if not (min_bpm <= bpm <= max_bpm):
                 continue
-            # Quantize gently; near-identical tempo evidence accumulates.
             key = round(bpm * 2.0) / 2.0
-            # Favor intervals that are close to a clean multiple of the
-            # hypothesized beat while avoiding a strong prior on any genre.
             error = abs((60.0 / key) / d - round((60.0 / key) / d))
             weight = 1.0 / (1.0 + 12.0 * error)
             votes[key] = votes.get(key, 0.0) + weight
@@ -62,7 +61,6 @@ def _assign_phase(times: Sequence[float], period: float) -> Tuple[float, float]:
     if not times or period <= 0:
         return 0.0, 0.0
     arr = np.asarray(times, dtype=float)
-    # Coarse phase search is tiny compared with the audio analysis itself.
     phases = np.linspace(0.0, period, 96, endpoint=False)
     best_phase, best_err = 0.0, float("inf")
     subdivision = period / 4.0
@@ -137,18 +135,70 @@ def clean_foundation_patterns(world: Any) -> Dict[str, int]:
         patterns.clear()
         patterns.update(kept)
     except Exception:
-        # The report layer still filters these even if the container is not mutable.
         pass
     return {"confirmed": confirmed, "rejected": rejected}
 
 
+def clean_foundation_sections(world: Any) -> Dict[str, int]:
+    """Discard unclosed/too-short trailing section candidates.
+
+    A section is not counted merely because a boundary event fired near the
+    end of the audio. A completed section must span at least one musical bar;
+    an ongoing tail must already contain one full bar of evidence.
+    """
+    sections = getattr(world, "sections", None)
+    if sections is None:
+        return {"kept": 0, "rejected": 0}
+
+    bpm = float(getattr(getattr(world, "groove", None), "tempo_bpm", 0.0))
+    if bpm <= 0.0:
+        bpm = 120.0
+    bar_period = 4.0 * (60.0 / bpm)
+    now = float(getattr(world, "t", 0.0))
+
+    kept = []
+    rejected = 0
+    confirmed_patterns = len(getattr(world, "patterns", {}) or {})
+
+    for sec in list(sections):
+        start = float(getattr(sec, "start_time", 0.0))
+        end_value = getattr(sec, "end_time", None)
+        end = now if end_value is None else float(end_value)
+        duration = end - start
+        if start < 0.0 or start > now + 1e-6 or duration < bar_period:
+            rejected += 1
+            continue
+
+        reason = str(getattr(sec, "boundary_reason", ""))
+        if "pattern_changed=True" in reason:
+            if confirmed_patterns:
+                reason = reason.replace("pattern_changed=True", "pattern_changed=True (confirmed repeated pattern evidence)")
+            else:
+                reason = reason.replace("pattern_changed=True", "pattern_changed=False (no confirmed repeated pattern evidence)")
+            try:
+                sec.boundary_reason = reason
+            except Exception:
+                pass
+        kept.append(sec)
+
+    try:
+        sections[:] = kept
+    except Exception:
+        pass
+    return {"kept": len(kept), "rejected": rejected}
+
+
 def refresh_style(model: Any) -> None:
+    world = getattr(model, "world", None)
+    if world is not None:
+        clean_foundation_sections(world)
+
     style = getattr(model, "style", None)
     if style is None or not hasattr(style, "update"):
         return
     if hasattr(style, "_last_update_t"):
         style._last_update_t = -1e9
     try:
-        style.update(float(model.world.t))
+        style.update(float(world.t))
     except Exception:
         pass
