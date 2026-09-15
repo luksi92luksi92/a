@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
-"""Optional Essentia adapter for richer time-varying timbre evidence.
-
-Essentia is used as an auxiliary feature extractor; the deterministic AWM
-physical/object pipeline remains authoritative. The adapter computes frame-
-level descriptors that are useful for arbitrary-source identity/change:
-MFCC, Bark-band energy, spectral peaks, spectral contrast, inharmonicity,
-and related spectral descriptors.
-
-The adapter never assigns semantic instrument labels and never replaces
-tracking/grouping. It attaches a compact, time-indexed timbre history to the
-WorldState and SoundObjects so downstream identity logic can compare how a
-tracked sound evolves.
-"""
+"""Optional Essentia adapter for richer time-varying timbre evidence."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
-
 import numpy as np
 
 try:
@@ -52,7 +39,7 @@ class EssentiaTimbreFrame:
 
 
 class EssentiaTimbreAdapter:
-    """Frame-level Essentia descriptors with compatibility across builds."""
+    """Frame-level Essentia descriptors with conservative build compatibility."""
 
     FRAME_SIZE = 2048
     HOP_SIZE = 256
@@ -70,28 +57,35 @@ class EssentiaTimbreAdapter:
         self._windowing = es.Windowing(type="blackmanharris62", size=self.FRAME_SIZE)
         self._spectrum = es.Spectrum(size=self.FRAME_SIZE)
 
-        # Essentia dev wheels differ in which convenience aliases are exposed.
-        # Use the generic algorithms where needed.
         centroid_cls = getattr(es, "SpectralCentroid", None)
-        self._centroid = (centroid_cls(sampleRate=self.sample_rate)
-                          if centroid_cls is not None
-                          else es.Centroid(range=self.sample_rate * 0.5))
+        if centroid_cls is not None:
+            self._centroid = centroid_cls(sampleRate=self.sample_rate)
+        elif hasattr(es, "Centroid"):
+            self._centroid = es.Centroid(range=self.sample_rate * 0.5)
+        else:
+            self._centroid = None
 
         spread_cls = getattr(es, "SpectralSpread", None)
-        self._spread = (spread_cls(sampleRate=self.sample_rate)
-                        if spread_cls is not None
-                        else es.Spread(range=self.sample_rate * 0.5))
-
-        self._flatness = es.SpectralFlatnessDB()
+        if spread_cls is not None:
+            self._spread = spread_cls(sampleRate=self.sample_rate)
+        elif hasattr(es, "Spread"):
+            self._spread = es.Spread(range=self.sample_rate * 0.5)
+        else:
+            self._spread = None
 
         rolloff_cls = getattr(es, "SpectralRollOff", None)
-        self._rolloff = (rolloff_cls(sampleRate=self.sample_rate, cutoff=0.85)
-                         if rolloff_cls is not None
-                         else es.RollOff(cutoff=0.85, sampleRate=self.sample_rate))
+        if rolloff_cls is not None:
+            self._rolloff = rolloff_cls(sampleRate=self.sample_rate, cutoff=0.85)
+        elif hasattr(es, "RollOff"):
+            self._rolloff = es.RollOff(cutoff=0.85, sampleRate=self.sample_rate)
+        else:
+            self._rolloff = None
 
+        self._flatness = getattr(es, "SpectralFlatnessDB", None)
+        self._flatness = self._flatness() if self._flatness else None
         self._flux = es.Flux()
         crest_cls = getattr(es, "SpectralCrest", None)
-        self._crest = crest_cls() if crest_cls is not None else es.Crest()
+        self._crest = crest_cls() if crest_cls is not None else (es.Crest() if hasattr(es, "Crest") else None)
         self._hfc = es.HFC()
         self._zcr = es.ZeroCrossingRate()
         self._mfcc = es.MFCC(
@@ -117,22 +111,21 @@ class EssentiaTimbreAdapter:
             mono = np.pad(mono, (0, self.FRAME_SIZE - mono.size))
         elif mono.size > self.FRAME_SIZE:
             mono = mono[:self.FRAME_SIZE]
-
         windowed = self._windowing(mono)
         spectrum = self._spectrum(windowed)
-        centroid = float(self._centroid(spectrum))
-        spread = float(self._spread(spectrum))
-        flatness = float(self._flatness(spectrum))
-        rolloff = float(self._rolloff(spectrum))
+
+        centroid = float(self._centroid(spectrum)) if self._centroid else 0.0
+        spread = float(self._spread(spectrum)) if self._spread else 0.0
+        flatness = float(self._flatness(spectrum)) if self._flatness else 0.0
+        rolloff = float(self._rolloff(spectrum)) if self._rolloff else 0.0
         flux = float(self._flux(spectrum, self._prev_spectrum)) if self._prev_spectrum is not None else 0.0
-        crest = float(self._crest(spectrum))
+        crest = float(self._crest(spectrum)) if self._crest else 0.0
         hfc = float(self._hfc(spectrum))
         zcr = float(self._zcr(mono))
 
         bands, coeffs = self._mfcc(spectrum)
         bands = np.asarray(bands, dtype=float)
         coeffs = np.asarray(coeffs, dtype=float)
-
         peak_freqs, peak_mags = self._peaks(spectrum)
         peak_freqs = np.asarray(peak_freqs, dtype=float)[: self.MAX_PEAKS]
         peak_mags = np.asarray(peak_mags, dtype=float)[: self.MAX_PEAKS]
@@ -147,16 +140,17 @@ class EssentiaTimbreAdapter:
                 if len(harm_freqs) >= 2:
                     inharm = float(self._inharmonicity(harm_freqs, harm_mags))
             except Exception:
-                inharm = 0.0
+                pass
 
         contrast = []
-        try:
-            contrast_algo = es.SpectralContrast(sampleRate=self.sample_rate)
-            contrast = np.asarray(contrast_algo(spectrum), dtype=float).tolist()
-        except Exception:
-            log_bands = np.log1p(np.maximum(bands, 0.0))
-            if log_bands.size:
-                contrast = np.diff(log_bands).tolist()
+        contrast_cls = getattr(es, "SpectralContrast", None)
+        if contrast_cls is not None:
+            try:
+                contrast = np.asarray(contrast_cls(sampleRate=self.sample_rate)(spectrum), dtype=float).tolist()
+            except Exception:
+                contrast = []
+        if not contrast and bands.size:
+            contrast = np.diff(np.log1p(np.maximum(bands, 0.0))).tolist()
 
         self._prev_spectrum = np.asarray(spectrum, dtype=float)
         return EssentiaTimbreFrame(
@@ -178,7 +172,6 @@ class EssentiaTimbreAdapter:
         )
 
     def analyze(self, audio: np.ndarray, hop_size: Optional[int] = None) -> List[EssentiaTimbreFrame]:
-        """Return a time-indexed timbre track for the supplied mono audio."""
         if not self.available:
             return []
         hop = int(hop_size or self.HOP_SIZE)
@@ -204,7 +197,6 @@ class EssentiaTimbreAdapter:
         return features[idx]
 
     def attach_to_world(self, world: Any, features: Sequence[EssentiaTimbreFrame]) -> int:
-        """Attach nearest Essentia descriptors to tracked objects by history time."""
         if not features:
             return 0
         track = [f.to_dict() for f in features]
