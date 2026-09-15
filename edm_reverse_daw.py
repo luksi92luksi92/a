@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with improved transient detection, Demucs,
-Essentia timbre analysis, tempo/structure quality gates, and progression output.
+"""EDM reverse-DAW entry point with stems-first orchestration.
+
+This branch uses the full source mix for canonical Beat This! beat/downbeat
+tracking, separates the source into Demucs stems before AWM processing, then
+uses the same beat grid for the mix and every stem-aligned task. AWM transient
+and physical analysis remain event/object evidence; the internal RhythmEngine
+is bypassed when Beat This! is available so it cannot invent a competing beat
+clock.
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import math
 import numpy as np
 import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
 from edm_quality_control import clean_foundation_patterns, correct_groove, refresh_style
+from edm_stems_first_pipeline import (
+    align_stems_to_beats,
+    attach_pipeline_state,
+    install_canonical_beat_grid,
+    prepare_stems_first,
+    track_source_beats,
+)
 
 try:
     from auditory_world_model_essentia import EssentiaTimbreAdapter, HAVE_ESSENTIA
@@ -116,7 +128,7 @@ def _print_structure_state_fixed(self) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run EDM reverse-DAW analysis with improved transient detection, Demucs, Essentia, and quality gates."
+        description="Run the stems-first EDM reverse-DAW with Beat This! as the canonical beat clock."
     )
     parser.add_argument("audio", nargs="?", default=None)
     parser.add_argument("--export-json", default=None)
@@ -124,9 +136,9 @@ def main():
     args = parser.parse_args()
 
     print("\n" + "=" * 96)
-    print("AUDITORY WORLD MODEL — EDM REVERSE-DAW")
+    print("AUDITORY WORLD MODEL — EDM REVERSE-DAW / STEMS-FIRST")
     print("=" * 96)
-    print("[1/7] Loading audio...")
+    print("[1/8] Loading source audio...")
 
     params = _core.awm.Parameters()
     source = _core.awm.AudioSource(params)
@@ -136,61 +148,101 @@ def main():
 
     model = _core.awm.AuditoryWorldModel(params)
 
-    print("[2/7] Demucs coarse source separation: RUNNING")
-    print("        stems -> drums / bass / vocals / other cues")
-    model.run(audio, use_stem_separation=True)
-    stem_engine = getattr(model, "stem_separation", None)
-    if stem_engine is not None and not stem_engine.available:
-        print("[2/7] Demucs coarse source separation: UNAVAILABLE")
-        print("        install in Colab with: !pip install demucs")
+    print("[2/8] Beat tracking on full source mix: RUNNING")
+    beat_grid = None
+    try:
+        beat_grid = track_source_beats(audio, params.sample_rate)
+        print(
+            f"        source={beat_grid.source} beats={len(beat_grid.beats)} "
+            f"downbeats={len(beat_grid.downbeats)} tempo={beat_grid.tempo_bpm:.2f} BPM"
+        )
+        print("        canonical grid -> mix + all Demucs stems")
+    except Exception as exc:
+        print(f"[2/8] Beat This! unavailable/failed: {exc}")
+        print("        fallback: AWM RhythmEngine + post-run transient consensus")
+
+    print("[3/8] Demucs source separation: RUNNING")
+    stems = prepare_stems_first(model, audio, params.sample_rate)
+    if stems:
+        print(f"        stems={', '.join(sorted(stems))}")
+        print("        separation completed BEFORE AWM object processing; cached for reuse")
     else:
-        print("[2/7] Demucs coarse source separation: DONE")
+        stem_engine = getattr(model, "stem_separation", None)
+        if stem_engine is not None and not stem_engine.available:
+            print("[3/8] Demucs source separation: UNAVAILABLE")
+            print("        install in Colab with: !pip install demucs")
+        else:
+            print("[3/8] Demucs source separation: FAILED/EMPTY; continuing on source mix")
+
+    if beat_grid is not None:
+        install_canonical_beat_grid(model, beat_grid)
+
+    print("[4/8] Physical analysis + tracking: RUNNING")
+    model.run(audio, use_stem_separation=bool(stems))
+    print("[4/8] Physical analysis + SoundObject tracking: DONE")
+
+    # Beat-aligned stem observations are deliberately lightweight: one shared
+    # grid, one short RMS/peak window per beat, no independent beat trackers.
+    stem_features = {}
+    if stems and beat_grid is not None:
+        stem_features = align_stems_to_beats(stems, beat_grid, params.sample_rate)
+        print(f"        beat-aligned stem tasks: {len(stem_features)} stems x {len(beat_grid.beats)} beats")
+    attach_pipeline_state(model, beat_grid, stem_features)
 
     quality = clean_foundation_patterns(model.world)
-    groove = correct_groove(model.world)
-    refresh_style(model)
-    print(
-        f"[2/7] Quality gates: patterns_kept={quality['confirmed']} "
-        f"one_off_patterns_rejected={quality['rejected']}"
-    )
-    if groove["bpm"] > 0:
+    if beat_grid is None:
+        groove = correct_groove(model.world)
         print(
-            f"        tempo_consensus={groove['bpm']:.1f} BPM "
+            f"[5/8] Quality gates: patterns_kept={quality['confirmed']} "
+            f"one_off_patterns_rejected={quality['rejected']}"
+        )
+        print(
+            f"        tempo_source=AWM+transient_consensus bpm={groove['bpm']:.1f} "
             f"confidence={groove['confidence']:.2f} intervals={int(groove['intervals'])}"
+        )
+    else:
+        refresh_style(model)
+        print(
+            f"[5/8] Quality gates: patterns_kept={quality['confirmed']} "
+            f"one_off_patterns_rejected={quality['rejected']}"
+        )
+        print(
+            f"        tempo_source={beat_grid.source} bpm={beat_grid.tempo_bpm:.2f} "
+            f"grid_confidence={beat_grid.confidence:.2f}"
         )
 
     model.print_structure_state = _print_structure_state_fixed.__get__(model, type(model))
 
-    print("[3/7] Essentia timbre analysis:", "RUNNING" if HAVE_ESSENTIA else "UNAVAILABLE (install essentia)")
+    print("[6/8] Essentia source timbre analysis:", "RUNNING" if HAVE_ESSENTIA else "UNAVAILABLE (install essentia)")
     if HAVE_ESSENTIA and EssentiaTimbreAdapter is not None:
         essentia = EssentiaTimbreAdapter(sample_rate=params.sample_rate)
         essentia_features = essentia.analyze(audio, hop_size=2048)
         attached = essentia.attach_to_world(model.world, essentia_features)
-        print(f"        frames={len(essentia_features)} objects_enriched={attached}")
+        print(f"        source frames={len(essentia_features)} objects_enriched={attached}")
         print("        descriptors -> MFCC / spectral peaks / contrast / inharmonicity / spectral shape")
-        print("        mode=coarse timbre track (2048-sample hop; AWM remains full-resolution)")
+        print("        mode=coarse source timbre track (2048-sample hop; AWM remains full-resolution)")
     else:
         essentia_features = []
         print("        continuing with native AWM timbre features")
 
-    print("[4/7] Physical analysis + transient detection / SoundObject tracking: DONE")
-    print("[5/7] EDM elements / patterns / sections / arrangement...")
+    print("[7/8] EDM elements / patterns / sections / arrangement...")
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
-    print("[5/7] EDM structural layer: DONE")
+    print("[7/8] EDM structural layer: DONE")
 
-    print("[6/7] Evaluation / export state: DONE")
-    print("[7/7] Generating activity plot...")
+    print("[8/8] Evaluation / export / activity plot...")
 
     if args.export_json:
         path = edm.export_json(args.export_json)
         print(f"exported={path}")
 
     original_subplots = plt.subplots
+
     def wide_subplots(*plot_args, **plot_kwargs):
         if plot_kwargs.get("figsize") == (14, 9):
             plot_kwargs["figsize"] = (32, 10)
         return original_subplots(*plot_args, **plot_kwargs)
+
     plt.subplots = wide_subplots
     try:
         model.plot_activity(save_path=args.plot)
@@ -204,6 +256,9 @@ def main():
     print("=" * 96)
     print(f"audio_duration={audio_duration:.3f}s")
     print(f"time={snapshot['time']:.3f}s")
+    print(f"beat_source={beat_grid.source if beat_grid is not None else 'AWM_RhythmEngine_fallback'}")
+    print(f"beat_times={len(beat_grid.beats) if beat_grid is not None else 0}")
+    print(f"stems={len(stems)}")
     print(f"source hypotheses={len(snapshot['source_hypotheses'])}")
     print(f"elements={len(snapshot['elements'])}")
     print(f"patterns={len(snapshot['patterns'])}")
