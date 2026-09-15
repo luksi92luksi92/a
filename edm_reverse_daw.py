@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -70,6 +71,58 @@ def _detect_transients_fixed(flux: np.ndarray, hop: int, sr: int):
 _core.awm.PhysicalAnalyzer.detect_transients = staticmethod(_detect_transients_fixed)
 
 
+def _print_structure_state_fixed(self) -> None:
+    """Report only genuine repeated patterns, with real time spans.
+
+    The foundation's pattern records can contain one-off structural candidates.
+    Those are not musical patterns and previously appeared as e.g.
+    ``occurrences=1 [12.57s - 12.57s]``. A repeated pattern needs at least two
+    occurrences. When the foundation stores occurrence timestamps as the first
+    and last occurrence starts, the displayed end is extended by one pattern
+    period so the interval represents the actual pattern window rather than a
+    zero-duration event point.
+    """
+    print("\n" + "=" * 78)
+    print("STRUCTURE (patterns / sections)")
+    print("=" * 78)
+
+    candidates = list(self.world.patterns.values())
+    patterns = [
+        pat for pat in candidates
+        if int(getattr(pat, "occurrence_count", 0)) >= 2
+        and float(getattr(pat, "last_seen", 0.0)) >= float(getattr(pat, "first_seen", 0.0))
+        and int(getattr(pat, "period_bars", 0)) >= 1
+    ]
+    print(f"Patterns detected: {len(patterns)}")
+    if len(patterns) < len(candidates):
+        print(f"One-off structural candidates rejected as patterns: {len(candidates) - len(patterns)}")
+
+    tempo = float(getattr(self.world.groove, "tempo_bpm", 0.0))
+    if tempo <= 0.0:
+        tempo = 120.0
+    beat_period = 60.0 / tempo
+    bar_period = 4.0 * beat_period
+
+    for pat in sorted(patterns, key=lambda p: (float(p.first_seen), str(p.pattern_id))):
+        first = float(pat.first_seen)
+        last_occurrence_start = float(pat.last_seen)
+        pattern_duration = max(0.0, int(pat.period_bars) * bar_period)
+        end = max(last_occurrence_start + pattern_duration, first + pattern_duration)
+        print(
+            f"  {pat.pattern_id}  period={pat.period_bars} bar(s)  "
+            f"status={pat.status:<7}  confidence={pat.confidence:.2f}  "
+            f"occurrences={pat.occurrence_count}  "
+            f"[{first:.2f}s - {end:.2f}s]  "
+            f"duration={end - first:.2f}s"
+        )
+
+    print(f"\nSections: {len(self.world.sections)}")
+    for sec in self.world.sections:
+        end = f"{sec.end_time:.2f}s" if sec.end_time is not None else "(ongoing)"
+        print(f"  {sec.section_id}  [{sec.start_time:.2f}s - {end}]  novelty={sec.novelty_score:.2f}  "
+              f"reason: {sec.boundary_reason}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with improved transient detection, Demucs, and Essentia timbre analysis.")
     parser.add_argument("audio", nargs="?", default=None)
@@ -93,7 +146,15 @@ def main():
     print("[2/7] Demucs coarse source separation: RUNNING")
     print("        stems -> drum / bass / other / vocal cues")
     model.run(audio, use_stem_separation=True)
-    print("[2/7] Demucs coarse source separation: DONE")
+    if getattr(model, "stem_separation", None) is not None and not model.stem_separation.available:
+        print("[2/7] Demucs coarse source separation: UNAVAILABLE (package not installed)")
+    else:
+        print("[2/7] Demucs coarse source separation: DONE")
+
+    # Replace the misleading foundation structure printer with a report that
+    # distinguishes one-off candidates from actual repeated patterns and gives
+    # patterns a non-zero temporal extent.
+    model.print_structure_state = _print_structure_state_fixed.__get__(model, type(model))
 
     # Essentia is an auxiliary, frame-level timbre analyzer. The AWM physical
     # and object layers are authoritative; Essentia enriches their persistent
