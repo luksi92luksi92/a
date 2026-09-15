@@ -1,3 +1,4 @@
 # Optional richer timbre/spectral analysis for the reverse-DAW
 # Core AWM remains usable without this dependency.
-essentia>=2.1.0
+# Pin to a wheel version that is published for Colab's supported CPython builds.
+essentia==2.1b6.dev1389
