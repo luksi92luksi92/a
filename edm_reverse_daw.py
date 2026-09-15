@@ -181,17 +181,24 @@ def main():
     model.run(audio, use_stem_separation=bool(stems))
     print("[4/8] Physical analysis + SoundObject tracking: DONE")
 
-    # Beat-aligned stem observations are deliberately lightweight: one shared
-    # grid, one short RMS/peak window per beat, no independent beat trackers.
+    # Beat-aligned stem observations use exactly the source beat grid; no
+    # independent stem beat tracker is allowed to redefine the clock.
     stem_features = {}
     if stems and beat_grid is not None:
         stem_features = align_stems_to_beats(stems, beat_grid, params.sample_rate)
         print(f"        beat-aligned stem tasks: {len(stem_features)} stems x {len(beat_grid.beats)} beats")
+        for name in sorted(stem_features):
+            stats = stem_features[name]
+            print(
+                f"        {name:<7} mean_rms={stats['mean_rms']:.5f} "
+                f"max_rms={stats['max_rms']:.5f}"
+            )
     attach_pipeline_state(model, beat_grid, stem_features)
 
     quality = clean_foundation_patterns(model.world)
     if beat_grid is None:
         groove = correct_groove(model.world)
+        refresh_style(model)
         print(
             f"[5/8] Quality gates: patterns_kept={quality['confirmed']} "
             f"one_off_patterns_rejected={quality['rejected']}"
