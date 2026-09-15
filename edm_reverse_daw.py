@@ -95,16 +95,19 @@ def main():
     model.run(audio, use_stem_separation=True)
     print("[2/7] Demucs coarse source separation: DONE")
 
-    # Essentia is an auxiliary, frame-level timbre analyzer. It does not
-    # replace AWM tracking; it supplies richer spectral/cepstral evidence
-    # that is attached to the same persistent sound-object histories.
+    # Essentia is an auxiliary, frame-level timbre analyzer. The AWM physical
+    # and object layers are authoritative; Essentia enriches their persistent
+    # histories with higher-resolution spectral/cepstral evidence. Use a
+    # 2048-sample analysis hop here instead of the AWM's 256-sample hop so a
+    # one-minute track does not explode into ~11k Python-level Essentia frames.
     print("[3/7] Essentia timbre analysis:", "RUNNING" if HAVE_ESSENTIA else "UNAVAILABLE (install essentia)")
     if HAVE_ESSENTIA and EssentiaTimbreAdapter is not None:
         essentia = EssentiaTimbreAdapter(sample_rate=params.sample_rate)
-        essentia_features = essentia.analyze(audio)
+        essentia_features = essentia.analyze(audio, hop_size=2048)
         attached = essentia.attach_to_world(model.world, essentia_features)
         print(f"        frames={len(essentia_features)} objects_enriched={attached}")
         print("        descriptors -> MFCC / spectral peaks / contrast / inharmonicity / spectral shape")
+        print("        mode=coarse timbre track (2048-sample hop; AWM remains full-resolution)")
     else:
         essentia_features = []
         print("        continuing with native AWM timbre features")
