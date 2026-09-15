@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with improved transient detection, Demucs, Essentia timbre analysis, and progression output."""
+"""EDM reverse-DAW entry point with improved transient detection, Demucs,
+Essentia timbre analysis, tempo/structure quality gates, and progression output.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
+from edm_quality_control import clean_foundation_patterns, correct_groove, refresh_style
 
 try:
     from auditory_world_model_essentia import EssentiaTimbreAdapter, HAVE_ESSENTIA
@@ -16,8 +19,6 @@ except Exception:
     EssentiaTimbreAdapter = None
     HAVE_ESSENTIA = False
 
-# Keep the analysis readable: suppress the per-object ObjectTracker birth/match
-# spam while retaining the explicit stage/progression output below.
 logging.getLogger("ObjectTracker").setLevel(logging.WARNING)
 
 
@@ -72,16 +73,7 @@ _core.awm.PhysicalAnalyzer.detect_transients = staticmethod(_detect_transients_f
 
 
 def _print_structure_state_fixed(self) -> None:
-    """Report only genuine repeated patterns, with real time spans.
-
-    The foundation's pattern records can contain one-off structural candidates.
-    Those are not musical patterns and previously appeared as e.g.
-    ``occurrences=1 [12.57s - 12.57s]``. A repeated pattern needs at least two
-    occurrences. When the foundation stores occurrence timestamps as the first
-    and last occurrence starts, the displayed end is extended by one pattern
-    period so the interval represents the actual pattern window rather than a
-    zero-duration event point.
-    """
+    """Report only genuine repeated foundation patterns with real durations."""
     print("\n" + "=" * 78)
     print("STRUCTURE (patterns / sections)")
     print("=" * 78)
@@ -112,8 +104,7 @@ def _print_structure_state_fixed(self) -> None:
             f"  {pat.pattern_id}  period={pat.period_bars} bar(s)  "
             f"status={pat.status:<7}  confidence={pat.confidence:.2f}  "
             f"occurrences={pat.occurrence_count}  "
-            f"[{first:.2f}s - {end:.2f}s]  "
-            f"duration={end - first:.2f}s"
+            f"[{first:.2f}s - {end:.2f}s]  duration={end - first:.2f}s"
         )
 
     print(f"\nSections: {len(self.world.sections)}")
@@ -124,7 +115,9 @@ def _print_structure_state_fixed(self) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with improved transient detection, Demucs, and Essentia timbre analysis.")
+    parser = argparse.ArgumentParser(
+        description="Run EDM reverse-DAW analysis with improved transient detection, Demucs, Essentia, and quality gates."
+    )
     parser.add_argument("audio", nargs="?", default=None)
     parser.add_argument("--export-json", default=None)
     parser.add_argument("--plot", default="auditory_world_model_activity.png")
@@ -138,29 +131,36 @@ def main():
     params = _core.awm.Parameters()
     source = _core.awm.AudioSource(params)
     audio, _ = source.load(args.audio)
+    audio_duration = len(audio) / float(params.sample_rate)
+    print(f"        duration={audio_duration:.3f}s  sample_rate={params.sample_rate}Hz")
 
     model = _core.awm.AuditoryWorldModel(params)
 
-    # Demucs/HTDemucs runs inside the AWM stem-separation stage. Make that
-    # stage explicit in the console instead of hiding it behind model.run().
     print("[2/7] Demucs coarse source separation: RUNNING")
-    print("        stems -> drum / bass / other / vocal cues")
+    print("        stems -> drums / bass / vocals / other cues")
     model.run(audio, use_stem_separation=True)
-    if getattr(model, "stem_separation", None) is not None and not model.stem_separation.available:
-        print("[2/7] Demucs coarse source separation: UNAVAILABLE (package not installed)")
+    stem_engine = getattr(model, "stem_separation", None)
+    if stem_engine is not None and not stem_engine.available:
+        print("[2/7] Demucs coarse source separation: UNAVAILABLE")
+        print("        install in Colab with: !pip install demucs")
     else:
         print("[2/7] Demucs coarse source separation: DONE")
 
-    # Replace the misleading foundation structure printer with a report that
-    # distinguishes one-off candidates from actual repeated patterns and gives
-    # patterns a non-zero temporal extent.
+    quality = clean_foundation_patterns(model.world)
+    groove = correct_groove(model.world)
+    refresh_style(model)
+    print(
+        f"[2/7] Quality gates: patterns_kept={quality['confirmed']} "
+        f"one_off_patterns_rejected={quality['rejected']}"
+    )
+    if groove["bpm"] > 0:
+        print(
+            f"        tempo_consensus={groove['bpm']:.1f} BPM "
+            f"confidence={groove['confidence']:.2f} intervals={int(groove['intervals'])}"
+        )
+
     model.print_structure_state = _print_structure_state_fixed.__get__(model, type(model))
 
-    # Essentia is an auxiliary, frame-level timbre analyzer. The AWM physical
-    # and object layers are authoritative; Essentia enriches their persistent
-    # histories with higher-resolution spectral/cepstral evidence. Use a
-    # 2048-sample analysis hop here instead of the AWM's 256-sample hop so a
-    # one-minute track does not explode into ~11k Python-level Essentia frames.
     print("[3/7] Essentia timbre analysis:", "RUNNING" if HAVE_ESSENTIA else "UNAVAILABLE (install essentia)")
     if HAVE_ESSENTIA and EssentiaTimbreAdapter is not None:
         essentia = EssentiaTimbreAdapter(sample_rate=params.sample_rate)
@@ -186,8 +186,6 @@ def main():
         path = edm.export_json(args.export_json)
         print(f"exported={path}")
 
-    # Make the shared AWM decomposition/spectrogram plot much wider so closely
-    # spaced transient markers can be inspected at higher time resolution.
     original_subplots = plt.subplots
     def wide_subplots(*plot_args, **plot_kwargs):
         if plot_kwargs.get("figsize") == (14, 9):
@@ -201,12 +199,10 @@ def main():
 
     print(f"Activity plot saved to: {args.plot}")
 
-    # Restore the progression/state printouts that were present before the
-    # object-level print spam was introduced. Do NOT print object summaries
-    # or per-object tracker lines here.
     print("\n" + "=" * 96)
     print("EDM REVERSE-DAW LAYER")
     print("=" * 96)
+    print(f"audio_duration={audio_duration:.3f}s")
     print(f"time={snapshot['time']:.3f}s")
     print(f"source hypotheses={len(snapshot['source_hypotheses'])}")
     print(f"elements={len(snapshot['elements'])}")
@@ -218,8 +214,6 @@ def main():
         print(f"  confidence={arrangement['confidence']:.3f}")
         print(f"  sections={len(arrangement['section_ids'])}")
 
-    # Keep the useful foundation progression/state reports without the huge
-    # object-by-object summary/event dump.
     for label, method_name in (
         ("Masking / bass recovery", "print_masked_bass_recovery_trace"),
         ("Groove", "print_groove_state"),
