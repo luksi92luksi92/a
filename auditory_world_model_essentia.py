@@ -23,7 +23,7 @@ try:
     import essentia.standard as es
     HAVE_ESSENTIA = True
     ESSENTIA_ERROR = ""
-except Exception as exc:  # optional dependency
+except Exception as exc:
     es = None
     HAVE_ESSENTIA = False
     ESSENTIA_ERROR = str(exc)
@@ -52,7 +52,7 @@ class EssentiaTimbreFrame:
 
 
 class EssentiaTimbreAdapter:
-    """Frame-level Essentia descriptors with graceful optional fallback."""
+    """Frame-level Essentia descriptors with compatibility across builds."""
 
     FRAME_SIZE = 2048
     HOP_SIZE = 256
@@ -65,28 +65,48 @@ class EssentiaTimbreAdapter:
         self.available = HAVE_ESSENTIA
         self.error = ESSENTIA_ERROR
         if not self.available:
-            self._window = None
             return
 
         self._windowing = es.Windowing(type="blackmanharris62", size=self.FRAME_SIZE)
         self._spectrum = es.Spectrum(size=self.FRAME_SIZE)
-        self._centroid = es.SpectralCentroid(sampleRate=self.sample_rate)
-        self._spread = es.SpectralSpread(sampleRate=self.sample_rate)
+
+        # Essentia dev wheels differ in which convenience aliases are exposed.
+        # Use the generic algorithms where needed.
+        centroid_cls = getattr(es, "SpectralCentroid", None)
+        self._centroid = (centroid_cls(sampleRate=self.sample_rate)
+                          if centroid_cls is not None
+                          else es.Centroid(range=self.sample_rate * 0.5))
+
+        spread_cls = getattr(es, "SpectralSpread", None)
+        self._spread = (spread_cls(sampleRate=self.sample_rate)
+                        if spread_cls is not None
+                        else es.Spread(range=self.sample_rate * 0.5))
+
         self._flatness = es.SpectralFlatnessDB()
-        self._rolloff = es.SpectralRollOff(sampleRate=self.sample_rate, cutoff=0.85)
+
+        rolloff_cls = getattr(es, "SpectralRollOff", None)
+        self._rolloff = (rolloff_cls(sampleRate=self.sample_rate, cutoff=0.85)
+                         if rolloff_cls is not None
+                         else es.RollOff(cutoff=0.85, sampleRate=self.sample_rate))
+
         self._flux = es.Flux()
-        self._crest = es.SpectralCrest()
+        crest_cls = getattr(es, "SpectralCrest", None)
+        self._crest = crest_cls() if crest_cls is not None else es.Crest()
         self._hfc = es.HFC()
         self._zcr = es.ZeroCrossingRate()
-        self._mfcc = es.MFCC(inputSize=self.FRAME_SIZE // 2 + 1,
-                             sampleRate=self.sample_rate,
-                             numberCoefficients=self.MFCC_COEFFS,
-                             numberBands=self.MFCC_BANDS)
-        self._peaks = es.SpectralPeaks(maxPeaks=self.MAX_PEAKS,
-                                       sampleRate=self.sample_rate,
-                                       magnitudeThreshold=0.001,
-                                       minFrequency=20.0,
-                                       maxFrequency=self.sample_rate * 0.5)
+        self._mfcc = es.MFCC(
+            inputSize=self.FRAME_SIZE // 2 + 1,
+            sampleRate=self.sample_rate,
+            numberCoefficients=self.MFCC_COEFFS,
+            numberBands=self.MFCC_BANDS,
+        )
+        self._peaks = es.SpectralPeaks(
+            maxPeaks=self.MAX_PEAKS,
+            sampleRate=self.sample_rate,
+            magnitudeThreshold=0.001,
+            minFrequency=20.0,
+            maxFrequency=self.sample_rate * 0.5,
+        )
         self._harmonic_peaks = es.HarmonicPeaks()
         self._inharmonicity = es.Inharmonicity()
         self._prev_spectrum: Optional[np.ndarray] = None
@@ -120,19 +140,15 @@ class EssentiaTimbreAdapter:
         inharm = 0.0
         if peak_freqs.size:
             try:
-                # HarmonicPeaks needs a pitch; for arbitrary sounds we treat
-                # the strongest spectral peak as a provisional fundamental.
                 fundamental = float(peak_freqs[np.argmax(peak_mags)])
-                harm_freqs, harm_mags = self._harmonic_peaks(peak_freqs.tolist(),
-                                                              peak_mags.tolist(),
-                                                              fundamental)
+                harm_freqs, harm_mags = self._harmonic_peaks(
+                    peak_freqs.tolist(), peak_mags.tolist(), fundamental
+                )
                 if len(harm_freqs) >= 2:
                     inharm = float(self._inharmonicity(harm_freqs, harm_mags))
             except Exception:
                 inharm = 0.0
 
-        # SpectralContrast is optional across Essentia builds, so use a
-        # stable fallback derived from adjacent log-band differences.
         contrast = []
         try:
             contrast_algo = es.SpectralContrast(sampleRate=self.sample_rate)
