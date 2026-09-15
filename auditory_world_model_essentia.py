@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Optional Essentia adapter for richer time-varying timbre evidence."""
+"""Required Essentia adapter for richer time-varying timbre evidence.
+
+Essentia is a required feature extractor for the reverse-DAW timbre layer.
+The deterministic AWM physical/object pipeline remains authoritative, while
+this adapter contributes explicit, time-indexed timbre evidence for identity
+and source-change analysis.
+
+No requested descriptor is silently replaced with zero or skipped. The
+installed Essentia build is validated at startup. Spectral spread is computed
+directly from the spectrum because the portable Essentia Python API exposes
+Centroid/CentralMoments rather than a stable SpectralSpread class name.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
+
 import numpy as np
 
 try:
@@ -39,7 +51,7 @@ class EssentiaTimbreFrame:
 
 
 class EssentiaTimbreAdapter:
-    """Frame-level Essentia descriptors with conservative build compatibility."""
+    """Strict frame-level Essentia descriptors across supported builds."""
 
     FRAME_SIZE = 2048
     HOP_SIZE = 256
@@ -47,45 +59,37 @@ class EssentiaTimbreAdapter:
     MFCC_COEFFS = 13
     MAX_PEAKS = 24
 
+    REQUIRED_ALGORITHMS = (
+        "Windowing", "Spectrum", "Centroid", "FlatnessDB", "RollOff",
+        "Flux", "Crest", "HFC", "ZeroCrossingRate", "MFCC",
+        "SpectralPeaks", "HarmonicPeaks", "Inharmonicity", "SpectralContrast",
+    )
+
     def __init__(self, sample_rate: int = 48000):
         self.sample_rate = int(sample_rate)
         self.available = HAVE_ESSENTIA
         self.error = ESSENTIA_ERROR
         if not self.available:
-            return
+            raise RuntimeError(
+                "Essentia is required for timbre analysis but could not be imported: "
+                f"{self.error}"
+            )
+
+        missing = [name for name in self.REQUIRED_ALGORITHMS if not hasattr(es, name)]
+        if missing:
+            raise RuntimeError(
+                "Installed Essentia build is missing required timbre algorithms: "
+                + ", ".join(missing)
+                + ". No silent fallback is permitted."
+            )
 
         self._windowing = es.Windowing(type="blackmanharris62", size=self.FRAME_SIZE)
         self._spectrum = es.Spectrum(size=self.FRAME_SIZE)
-
-        centroid_cls = getattr(es, "SpectralCentroid", None)
-        if centroid_cls is not None:
-            self._centroid = centroid_cls(sampleRate=self.sample_rate)
-        elif hasattr(es, "Centroid"):
-            self._centroid = es.Centroid(range=self.sample_rate * 0.5)
-        else:
-            self._centroid = None
-
-        spread_cls = getattr(es, "SpectralSpread", None)
-        if spread_cls is not None:
-            self._spread = spread_cls(sampleRate=self.sample_rate)
-        elif hasattr(es, "Spread"):
-            self._spread = es.Spread(range=self.sample_rate * 0.5)
-        else:
-            self._spread = None
-
-        rolloff_cls = getattr(es, "SpectralRollOff", None)
-        if rolloff_cls is not None:
-            self._rolloff = rolloff_cls(sampleRate=self.sample_rate, cutoff=0.85)
-        elif hasattr(es, "RollOff"):
-            self._rolloff = es.RollOff(cutoff=0.85, sampleRate=self.sample_rate)
-        else:
-            self._rolloff = None
-
-        self._flatness = getattr(es, "SpectralFlatnessDB", None)
-        self._flatness = self._flatness() if self._flatness else None
+        self._centroid = es.Centroid(range=self.sample_rate * 0.5)
+        self._flatness = es.FlatnessDB()
+        self._rolloff = es.RollOff(sampleRate=self.sample_rate, cutoff=0.85)
         self._flux = es.Flux()
-        crest_cls = getattr(es, "SpectralCrest", None)
-        self._crest = crest_cls() if crest_cls is not None else (es.Crest() if hasattr(es, "Crest") else None)
+        self._crest = es.Crest()
         self._hfc = es.HFC()
         self._zcr = es.ZeroCrossingRate()
         self._mfcc = es.MFCC(
@@ -103,7 +107,19 @@ class EssentiaTimbreAdapter:
         )
         self._harmonic_peaks = es.HarmonicPeaks()
         self._inharmonicity = es.Inharmonicity()
+        self._spectral_contrast = es.SpectralContrast(sampleRate=self.sample_rate)
         self._prev_spectrum: Optional[np.ndarray] = None
+
+    def _spectral_spread(self, spectrum: np.ndarray, centroid_hz: float) -> float:
+        mag = np.maximum(np.asarray(spectrum, dtype=np.float64), 0.0)
+        if mag.size <= 1:
+            return 0.0
+        freqs = np.linspace(0.0, self.sample_rate * 0.5, mag.size)
+        total = float(np.sum(mag))
+        if total <= 1e-12:
+            return 0.0
+        variance = float(np.sum(mag * (freqs - centroid_hz) ** 2) / total)
+        return float(np.sqrt(max(variance, 0.0)))
 
     def _frame_features(self, frame: np.ndarray, time: float) -> EssentiaTimbreFrame:
         mono = np.asarray(frame, dtype=np.float32)
@@ -111,48 +127,39 @@ class EssentiaTimbreAdapter:
             mono = np.pad(mono, (0, self.FRAME_SIZE - mono.size))
         elif mono.size > self.FRAME_SIZE:
             mono = mono[:self.FRAME_SIZE]
+
         windowed = self._windowing(mono)
         spectrum = self._spectrum(windowed)
-
-        centroid = float(self._centroid(spectrum)) if self._centroid else 0.0
-        spread = float(self._spread(spectrum)) if self._spread else 0.0
-        flatness = float(self._flatness(spectrum)) if self._flatness else 0.0
-        rolloff = float(self._rolloff(spectrum)) if self._rolloff else 0.0
+        centroid = float(self._centroid(spectrum))
+        spread = self._spectral_spread(spectrum, centroid)
+        flatness = float(self._flatness(spectrum))
+        rolloff = float(self._rolloff(spectrum))
         flux = float(self._flux(spectrum, self._prev_spectrum)) if self._prev_spectrum is not None else 0.0
-        crest = float(self._crest(spectrum)) if self._crest else 0.0
+        crest = float(self._crest(spectrum))
         hfc = float(self._hfc(spectrum))
         zcr = float(self._zcr(mono))
 
         bands, coeffs = self._mfcc(spectrum)
         bands = np.asarray(bands, dtype=float)
         coeffs = np.asarray(coeffs, dtype=float)
+
         peak_freqs, peak_mags = self._peaks(spectrum)
         peak_freqs = np.asarray(peak_freqs, dtype=float)[: self.MAX_PEAKS]
         peak_mags = np.asarray(peak_mags, dtype=float)[: self.MAX_PEAKS]
 
-        inharm = 0.0
-        if peak_freqs.size:
-            try:
-                fundamental = float(peak_freqs[np.argmax(peak_mags)])
-                harm_freqs, harm_mags = self._harmonic_peaks(
-                    peak_freqs.tolist(), peak_mags.tolist(), fundamental
-                )
-                if len(harm_freqs) >= 2:
-                    inharm = float(self._inharmonicity(harm_freqs, harm_mags))
-            except Exception:
-                pass
+        if peak_freqs.size < 2:
+            inharm = 0.0
+        else:
+            fundamental = float(peak_freqs[np.argmax(peak_mags)])
+            harm_freqs, harm_mags = self._harmonic_peaks(
+                peak_freqs.tolist(), peak_mags.tolist(), fundamental
+            )
+            inharm = (float(self._inharmonicity(harm_freqs, harm_mags))
+                      if len(harm_freqs) >= 2 else 0.0)
 
-        contrast = []
-        contrast_cls = getattr(es, "SpectralContrast", None)
-        if contrast_cls is not None:
-            try:
-                contrast = np.asarray(contrast_cls(sampleRate=self.sample_rate)(spectrum), dtype=float).tolist()
-            except Exception:
-                contrast = []
-        if not contrast and bands.size:
-            contrast = np.diff(np.log1p(np.maximum(bands, 0.0))).tolist()
-
+        contrast = np.asarray(self._spectral_contrast(spectrum), dtype=float).tolist()
         self._prev_spectrum = np.asarray(spectrum, dtype=float)
+
         return EssentiaTimbreFrame(
             time=float(time),
             spectral_centroid=centroid,
@@ -172,21 +179,24 @@ class EssentiaTimbreAdapter:
         )
 
     def analyze(self, audio: np.ndarray, hop_size: Optional[int] = None) -> List[EssentiaTimbreFrame]:
-        if not self.available:
-            return []
         hop = int(hop_size or self.HOP_SIZE)
+        if hop <= 0:
+            raise ValueError("hop_size must be positive")
         x = np.asarray(audio, dtype=np.float32)
         if x.ndim > 1:
             x = np.mean(x, axis=0)
         self._prev_spectrum = None
         out: List[EssentiaTimbreFrame] = []
-        n = max(0, x.size - self.FRAME_SIZE + hop)
-        for start in range(0, n, hop):
+        if x.size == 0:
+            return out
+        for start in range(0, x.size, hop):
             frame = x[start:start + self.FRAME_SIZE]
-            if frame.size < self.FRAME_SIZE and start > 0:
+            if frame.size < self.FRAME_SIZE:
                 frame = np.pad(frame, (0, self.FRAME_SIZE - frame.size))
             t = (start + 0.5 * self.FRAME_SIZE) / self.sample_rate
             out.append(self._frame_features(frame, t))
+            if start + self.FRAME_SIZE >= x.size:
+                break
         return out
 
     @staticmethod
@@ -198,7 +208,7 @@ class EssentiaTimbreAdapter:
 
     def attach_to_world(self, world: Any, features: Sequence[EssentiaTimbreFrame]) -> int:
         if not features:
-            return 0
+            raise ValueError("Essentia analysis produced no feature frames")
         track = [f.to_dict() for f in features]
         setattr(world, "essentia_timbre_track", track)
         attached = 0
