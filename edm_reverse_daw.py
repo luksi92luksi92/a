@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EDM reverse-DAW entry point with improved transient detection, Demucs, and progression output."""
+"""EDM reverse-DAW entry point with improved transient detection, Demucs, Essentia timbre analysis, and progression output."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
+
+try:
+    from auditory_world_model_essentia import EssentiaTimbreAdapter, HAVE_ESSENTIA
+except Exception:
+    EssentiaTimbreAdapter = None
+    HAVE_ESSENTIA = False
 
 # Keep the analysis readable: suppress the per-object ObjectTracker birth/match
 # spam while retaining the explicit stage/progression output below.
@@ -65,7 +71,7 @@ _core.awm.PhysicalAnalyzer.detect_transients = staticmethod(_detect_transients_f
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with improved transient detection.")
+    parser = argparse.ArgumentParser(description="Run EDM reverse-DAW analysis with improved transient detection, Demucs, and Essentia timbre analysis.")
     parser.add_argument("audio", nargs="?", default=None)
     parser.add_argument("--export-json", default=None)
     parser.add_argument("--plot", default="auditory_world_model_activity.png")
@@ -82,16 +88,28 @@ def main():
 
     model = _core.awm.AuditoryWorldModel(params)
 
-    # Demucs/HTDemucs runs inside the AWM stem-separation stage.  Make that
+    # Demucs/HTDemucs runs inside the AWM stem-separation stage. Make that
     # stage explicit in the console instead of hiding it behind model.run().
     print("[2/7] Demucs coarse source separation: RUNNING")
     print("        stems -> drum / bass / other / vocal cues")
     model.run(audio, use_stem_separation=True)
     print("[2/7] Demucs coarse source separation: DONE")
 
-    print("[3/7] Physical analysis + transient detection: DONE")
-    print("[4/7] SoundObject tracking / perceptual state: DONE")
+    # Essentia is an auxiliary, frame-level timbre analyzer. It does not
+    # replace AWM tracking; it supplies richer spectral/cepstral evidence
+    # that is attached to the same persistent sound-object histories.
+    print("[3/7] Essentia timbre analysis:", "RUNNING" if HAVE_ESSENTIA else "UNAVAILABLE (install essentia)")
+    if HAVE_ESSENTIA and EssentiaTimbreAdapter is not None:
+        essentia = EssentiaTimbreAdapter(sample_rate=params.sample_rate)
+        essentia_features = essentia.analyze(audio)
+        attached = essentia.attach_to_world(model.world, essentia_features)
+        print(f"        frames={len(essentia_features)} objects_enriched={attached}")
+        print("        descriptors -> MFCC / spectral peaks / contrast / inharmonicity / spectral shape")
+    else:
+        essentia_features = []
+        print("        continuing with native AWM timbre features")
 
+    print("[4/7] Physical analysis + transient detection / SoundObject tracking: DONE")
     print("[5/7] EDM elements / patterns / sections / arrangement...")
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
@@ -120,7 +138,7 @@ def main():
     print(f"Activity plot saved to: {args.plot}")
 
     # Restore the progression/state printouts that were present before the
-    # object-level print spam was introduced.  Do NOT print object summaries
+    # object-level print spam was introduced. Do NOT print object summaries
     # or per-object tracker lines here.
     print("\n" + "=" * 96)
     print("EDM REVERSE-DAW LAYER")
