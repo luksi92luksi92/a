@@ -7,6 +7,7 @@ Architecture:
                -> independent AWM analysis per stem
                -> stem-local objects/tracking/grouping/structure
                -> stem-local Essentia timbre evidence
+               -> beat/bar/phrase/section novelty diagnostics
 
 The mix is used for beat tracking only. It is not passed through the AWM
 physical/object/EDM analysis pipeline. Every Demucs stem gets its own
@@ -26,6 +27,7 @@ import matplotlib.pyplot as plt
 
 import edm_reverse_daw_core as _core
 from edm_quality_control import clean_foundation_patterns, correct_groove, refresh_style
+from edm_novelty_structure import BeatBarPhraseSectionNovelty
 from edm_stems_first_pipeline import (
     align_stems_to_beats,
     attach_pipeline_state,
@@ -123,6 +125,41 @@ def _print_structure_state_fixed(model):
         )
 
 
+def _run_novelty(stem_name, x, sample_rate, beat_grid, args):
+    if beat_grid is None:
+        print(f"[AWM/{stem_name}] novelty: SKIPPED (no canonical Beat This! grid)")
+        return None
+    analyzer = BeatBarPhraseSectionNovelty(
+        sample_rate=sample_rate,
+        beats_per_bar=4,
+        phrase_lengths=(4, 8, 16),
+        fft_size=2048,
+        hop_size=512,
+        context_bars=1,
+        min_section_bars=4,
+        section_refractory_bars=2,
+        section_threshold=0.48,
+    )
+    plot_dir = Path(args.plot_dir or "stem_activity")
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(stem_name))
+    plot_path = plot_dir / f"novelty_structure_{safe}.png"
+    json_base = Path(args.export_json) if args.export_json else plot_dir / "novelty_structure.json"
+    novelty_json = json_base.with_suffix("")
+    novelty_json = novelty_json.parent / f"{novelty_json.name}_{safe}_novelty.json"
+    print(f"[AWM/{stem_name}] beat/bar/phrase/section novelty: RUNNING")
+    payload = analyzer.run_and_export(x, beat_grid, str(plot_path), str(novelty_json), stem_name)
+    print(
+        f"[AWM/{stem_name}] novelty: DONE "
+        f"beat_candidates={sum(1 for c in payload['candidates'] if c['level']=='beat' and c['selected'])} "
+        f"bar_candidates={sum(1 for c in payload['candidates'] if c['level']=='bar' and c['selected'])} "
+        f"phrase_candidates={sum(1 for c in payload['candidates'] if c['level']=='phrase' and c['selected'])} "
+        f"section_candidates={sum(1 for c in payload['candidates'] if c['level']=='section' and c['selected'])}"
+    )
+    print(f"[AWM/{stem_name}] novelty plot={plot_path}")
+    return payload
+
+
 def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
     """Run the complete perception stack on exactly one separated stem."""
     params = _core.awm.Parameters()
@@ -136,7 +173,7 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
     model.run(x, use_stem_separation=False)
     print(f"[AWM/{stem_name}] physical + objects + tracking: DONE")
 
-    quality = clean_foundation_patterns(model.world)
+    clean_foundation_patterns(model.world)
     if beat_grid is None:
         groove = correct_groove(model.world)
         print(
@@ -144,11 +181,6 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
             f"bpm={groove['bpm']:.2f} confidence={groove['confidence']:.2f}"
         )
     else:
-        groove = {
-            "bpm": beat_grid.tempo_bpm,
-            "confidence": beat_grid.confidence,
-            "intervals": float(max(len(beat_grid.beats) - 1, 0)),
-        }
         print(
             f"[AWM/{stem_name}] tempo_source=beat_this_shared "
             f"bpm={beat_grid.tempo_bpm:.2f} grid_confidence={beat_grid.confidence:.2f}"
@@ -174,6 +206,11 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
 
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
+
+    novelty = _run_novelty(stem_name, x, sample_rate, beat_grid, args)
+    if novelty is not None:
+        snapshot["novelty_structure"] = novelty
+        model.world._novelty_structure = novelty
 
     stem_json = None
     if args.export_json:
@@ -207,6 +244,7 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
         "beat_aligned_features": stem_grid_features.get(stem_name, {}),
         "stem_export": stem_json,
         "essentia_frames": len(essentia_features),
+        "novelty_structure": novelty,
     }
 
 
@@ -265,6 +303,7 @@ def main():
             "mix_awmpipeline": False,
             "independent_stem_worlds": True,
             "shared_beat_grid": beat_grid.as_dict() if beat_grid is not None else None,
+            "novelty_structure": "beat_bar_phrase_section_v1",
         },
         "source": {"duration_s": duration, "sample_rate": params.sample_rate},
         "stems": {
@@ -273,6 +312,7 @@ def main():
                 "beat_aligned_features": data["beat_aligned_features"],
                 "essentia_frames": data["essentia_frames"],
                 "stem_export": data["stem_export"],
+                "novelty_structure": data["novelty_structure"],
             }
             for name, data in results.items()
         },
