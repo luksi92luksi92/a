@@ -1,5 +1,5 @@
-beat-this==1.1.0
-tqdm
-einops
-soxr
-rotary-embedding-torch
+# Backward-compatible dependency entry point.
+# The stems-first pipeline now declares the complete runtime dependency set
+# in requirements.txt; keep this file so existing Colab commands continue
+# to install the full stack.
+-r requirements.txt
