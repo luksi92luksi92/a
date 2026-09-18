@@ -1,0 +1,26 @@
+# Complete runtime dependency set for the stems-first EDM reverse-DAW pipeline.
+#
+# This is the canonical install file for Colab/local runs. Keep every
+# directly imported/required package here so new code does not introduce
+# undeclared runtime dependencies.
+numpy
+scipy
+matplotlib
+soundfile
+librosa
+torch
+torchaudio
+IPython
+
+# Canonical full-mix beat/downbeat tracking
+beat-this==1.1.0
+tqdm
+einops
+soxr
+rotary-embedding-torch
+
+# Required stem separation
+demucs
+
+# Rich timbre/spectral descriptors used by the EDM reverse-DAW adapter
+essentia==2.1b6.dev1389
