@@ -59,6 +59,7 @@ class NoveltyStructureResult:
     section_spans: List[Dict[str, Any]]
     functional_segments: List[Dict[str, Any]]
     segment_groups: List[Dict[str, Any]]
+    similarity_pairs: List[Dict[str, Any]]
     candidates: List[Dict[str, Any]]
     beat_volume_pct_original: List[float]
     bar_volume_pct_original: List[float]
@@ -776,140 +777,181 @@ class BeatBarPhraseSectionNovelty:
         beat_volume: np.ndarray,
         beat_melody: np.ndarray,
         beat_novelty: np.ndarray,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Find every direct complete-segment match above the >6/10 rule.
+
+        No best-pair selection is made. Every direct pair with 7..10 matching
+        dimensions is retained. A stable color is assigned to each pair for the
+        pair-comparison rows. Segments may participate in multiple pairs.
+        """
         eligible = [
             s for s in segments
-            if s["grain"] == "bar"
+            if s.get("grain") == "bar"
             and s["kind"] in ("phrase", "section", "transition")
             and s["end_beat"] > s["start_beat"]
         ]
-        parent = list(range(len(eligible)))
-
-        def find(i: int) -> int:
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
         signatures = [
             self._segment_sequence(
                 s, bar_ranges, beat_F, beat_sync, beat_volume, beat_melody, beat_novelty
             )
             for s in eligible
         ]
-        pair_cache: Dict[Tuple[int, int], Tuple[int, float]] = {}
+
+        pairs: List[Dict[str, Any]] = []
+        pair_index = 0
         for i in range(len(eligible)):
             for j in range(i + 1, len(eligible)):
                 count, score = self._segment_pair_similarity(signatures[i], signatures[j])
-                pair_cache[(i, j)] = (count, score)
-                if count > 6 and count >= self.similarity_dimensions_required:
-                    union(i, j)
-
-        groups: Dict[int, int] = {}
-        group_members: Dict[int, List[int]] = {}
-        next_group = 0
-        for i, seg in enumerate(eligible):
-            root = find(i)
-            if root not in groups:
-                groups[root] = next_group
-                group_members[next_group] = []
-                next_group += 1
-            gid = groups[root]
-            group_members[gid].append(i)
-            seg["group_id"] = int(gid)
-            seg["group_color"] = self.GROUP_COLORS[gid % len(self.GROUP_COLORS)]
-
-        # Attach best complete-segment match evidence to every eligible segment.
-        for i, seg in enumerate(eligible):
-            best_count = 0
-            best_score = 0.0
-            best_id = None
-            for j, other in enumerate(eligible):
-                if i == j:
+                if count <= 6 or count < self.similarity_dimensions_required:
                     continue
-                key = (i, j) if i < j else (j, i)
-                count, score = pair_cache.get(key, (0, 0.0))
-                if count > best_count or (count == best_count and score > best_score):
-                    best_count, best_score, best_id = count, score, other["segment_id"]
-            seg["similarity_dimensions"] = int(best_count)
-            seg["similarity_score"] = float(best_score)
-            seg["best_match_segment_id"] = best_id
+                color = self.GROUP_COLORS[pair_index % len(self.GROUP_COLORS)]
+                a = eligible[i]
+                b = eligible[j]
+                pairs.append({
+                    "pair_id": f"pair_{pair_index:03d}",
+                    "segment_a": a["segment_id"],
+                    "segment_b": b["segment_id"],
+                    "segment_a_kind": a["kind"],
+                    "segment_b_kind": b["kind"],
+                    "dimensions_similar": int(count),
+                    "similarity_score": float(score),
+                    "color": color,
+                    "start_a_s": float(a["start_time_s"]),
+                    "end_a_s": float(a["end_time_s"]),
+                    "start_b_s": float(b["start_time_s"]),
+                    "end_b_s": float(b["end_time_s"]),
+                    "start_a_beat": int(a["start_beat"]),
+                    "end_a_beat": int(a["end_beat"]),
+                    "start_b_beat": int(b["start_beat"]),
+                    "end_b_beat": int(b["end_beat"]),
+                    "start_a_bar": int(a["start_bar"]),
+                    "end_a_bar": int(a["end_bar"]),
+                    "start_b_bar": int(b["start_bar"]),
+                    "end_b_bar": int(b["end_bar"]),
+                })
+                pair_index += 1
 
-        group_payload = []
-        for gid, members in sorted(group_members.items()):
-            segs = [eligible[i] for i in members]
+        # Keep direct-match evidence on each segment, but never collapse pairs
+        # into a single "winner".
+        for seg in eligible:
+            matches = [
+                p for p in pairs
+                if p["segment_a"] == seg["segment_id"] or p["segment_b"] == seg["segment_id"]
+            ]
+            seg["similarity_match_count"] = len(matches)
+            seg["similarity_dimensions"] = max(
+                [int(p["dimensions_similar"]) for p in matches] or [0]
+            )
+            seg["similarity_score"] = max(
+                [float(p["similarity_score"]) for p in matches] or [0.0]
+            )
+            seg["similarity_pair_ids"] = [p["pair_id"] for p in matches]
+
+        # Segment grouping is an indicator only. When a segment participates in
+        # multiple direct pairs, use its first pair color for the single timeline
+        # segment label; the dedicated pair rows retain each pair's own color.
+        for seg in eligible:
+            match_ids = seg["similarity_pair_ids"]
+            if match_ids:
+                first_pair = next(p for p in pairs if p["pair_id"] == match_ids[0])
+                seg["group_id"] = int(match_ids[0].split("_")[-1])
+                seg["group_color"] = str(first_pair["color"])
+            else:
+                seg["group_id"] = None
+                seg["group_color"] = None
+
+        group_payload: List[Dict[str, Any]] = []
+        for p in pairs:
             group_payload.append({
-                "group_id": int(gid),
-                "color": self.GROUP_COLORS[gid % len(self.GROUP_COLORS)],
-                "member_segment_ids": [s["segment_id"] for s in segs],
-                "member_count": len(segs),
-                "rule": f">{self.similarity_dimensions_required - 1}/10 dimensions similar",
+                "group_id": p["pair_id"],
+                "color": p["color"],
+                "member_segment_ids": [p["segment_a"], p["segment_b"]],
+                "member_count": 2,
+                "rule": f">{self.similarity_dimensions_required - 1}/10 direct segment similarity",
+                "dimensions_similar": p["dimensions_similar"],
+                "similarity_score": p["similarity_score"],
             })
-        return group_payload
+        return group_payload, pairs
 
-    def _beat_bar_similarity(
+    def _pairwise_bar_beat_similarity(
         self,
+        pairs: List[Dict[str, Any]],
         segments: List[Dict[str, Any]],
         beat_F: np.ndarray,
         bar_F: np.ndarray,
-        beat_sync: np.ndarray,
-        beat_melody: np.ndarray,
-        beat_novelty: np.ndarray,
-        bar_novelty: np.ndarray,
         bar_ranges: List[Tuple[int, int]],
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        beat_sim = np.zeros(len(beat_F), dtype=float)
-        bar_sim = np.zeros(len(bar_F), dtype=float)
-        grouped = {}
-        for s in segments:
-            if s.get("group_id") is not None and s.get("grain") == "bar" and s["kind"] in ("phrase", "section", "transition"):
-                grouped.setdefault(int(s["group_id"]), []).append(s)
+    ) -> List[Dict[str, Any]]:
+        """Compare bars and beats inside every accepted segment pair.
 
-        for members in grouped.values():
-            if len(members) < 2:
-                continue
-            # Compare beat positions inside otherwise similar complete segments.
-            for si, seg in enumerate(members):
-                b0, b1 = int(seg["start_beat"]), int(seg["end_beat"])
-                own = beat_F[b0:b1]
-                own_len = len(own)
-                if own_len == 0:
-                    continue
-                for oi, other in enumerate(members):
-                    if oi == si:
-                        continue
-                    ob0, ob1 = int(other["start_beat"]), int(other["end_beat"])
-                    other_x = beat_F[ob0:ob1]
-                    target = max(1, own_len)
-                    for j in range(own_len):
-                        p = 0.0 if own_len == 1 else j / float(own_len - 1)
-                        oj = min(len(other_x) - 1, int(round(p * max(0, len(other_x) - 1))))
-                        if oj < 0:
-                            continue
-                        a = own[j]
-                        b = other_x[oj]
-                        beat_sim[b0 + j] = max(
-                            beat_sim[b0 + j],
-                            float(np.clip(1.0 - self._distance(a, b), 0.0, 1.0)),
-                        )
+        Both sides use the same global Beat This! grid. Segment-local positions
+        are normalized onto each other, which permits phrase/section duration
+        differences without changing the authoritative clock.
+        """
+        by_id = {s["segment_id"]: s for s in segments}
+        outputs: List[Dict[str, Any]] = []
 
-                bs = [k for k, (s0, e0) in enumerate(bar_ranges) if s0 >= b0 and e0 <= b1]
-                obs = [k for k, (s0, e0) in enumerate(bar_ranges) if s0 >= ob0 and e0 <= ob1]
-                for j, bj in enumerate(bs):
-                    if not obs:
-                        break
-                    oj = min(len(obs) - 1, int(round((j / max(len(bs) - 1, 1)) * (len(obs) - 1))))
-                    bo = obs[oj]
-                    bar_sim[bj] = max(
-                        bar_sim[bj],
-                        float(np.clip(1.0 - self._distance(bar_F[bj], bar_F[bo]), 0.0, 1.0)),
-                    )
-        return beat_sim, bar_sim
+        for p in pairs:
+            a = by_id[p["segment_a"]]
+            b = by_id[p["segment_b"]]
+
+            a_b0, a_b1 = int(a["start_beat"]), int(a["end_beat"])
+            b_b0, b_b1 = int(b["start_beat"]), int(b["end_beat"])
+
+            a_bars = [
+                k for k, (s0, e0) in enumerate(bar_ranges)
+                if s0 >= a_b0 and e0 <= a_b1
+            ]
+            b_bars = [
+                k for k, (s0, e0) in enumerate(bar_ranges)
+                if s0 >= b_b0 and e0 <= b_b1
+            ]
+
+            a_bar_scores: List[Dict[str, Any]] = []
+            for j, ak in enumerate(a_bars):
+                if not b_bars:
+                    break
+                bj = min(
+                    len(b_bars) - 1,
+                    int(round((j / max(len(a_bars) - 1, 1)) * (len(b_bars) - 1))),
+                )
+                bk = b_bars[bj]
+                score = float(np.clip(1.0 - self._distance(bar_F[ak], bar_F[bk]), 0.0, 1.0))
+                a_bar_scores.append({
+                    "a_bar_index": int(ak),
+                    "b_bar_index": int(bk),
+                    "score": score,
+                })
+
+            a_beat_scores: List[Dict[str, Any]] = []
+            a_beats = list(range(a_b0, min(a_b1, len(beat_F))))
+            b_beats = list(range(b_b0, min(b_b1, len(beat_F))))
+            for j, ai in enumerate(a_beats):
+                if not b_beats:
+                    break
+                bj = min(
+                    len(b_beats) - 1,
+                    int(round((j / max(len(a_beats) - 1, 1)) * (len(b_beats) - 1))),
+                )
+                bi = b_beats[bj]
+                score = float(np.clip(1.0 - self._distance(beat_F[ai], beat_F[bi]), 0.0, 1.0))
+                a_beat_scores.append({
+                    "a_beat_index": int(ai),
+                    "b_beat_index": int(bi),
+                    "score": score,
+                })
+
+            p2 = dict(p)
+            p2["bar_matches"] = a_bar_scores
+            p2["beat_matches"] = a_beat_scores
+            p2["bar_match_mean"] = float(
+                np.mean([x["score"] for x in a_bar_scores]) if a_bar_scores else 0.0
+            )
+            p2["beat_match_mean"] = float(
+                np.mean([x["score"] for x in a_beat_scores]) if a_beat_scores else 0.0
+            )
+            outputs.append(p2)
+
+        return outputs
 
     def analyze(
         self,
@@ -1055,7 +1097,7 @@ class BeatBarPhraseSectionNovelty:
             self._frame_activity_mask(frame_rms, stats["threshold_dbfs"]),
             period,
         )
-        segment_groups = self._group_segments(
+        segment_groups, similarity_pairs = self._group_segments(
             functional_segments,
             bar_ranges,
             beat_F,
@@ -1064,15 +1106,11 @@ class BeatBarPhraseSectionNovelty:
             beat_melody,
             beat_nov,
         )
-
-        beat_sim, bar_sim = self._beat_bar_similarity(
+        similarity_pairs = self._pairwise_bar_beat_similarity(
+            similarity_pairs,
             functional_segments,
             beat_F,
             bar_F,
-            beat_sync,
-            beat_melody,
-            beat_nov,
-            bar_nov,
             bar_ranges,
         )
 
@@ -1097,6 +1135,7 @@ class BeatBarPhraseSectionNovelty:
             ],
             functional_segments=functional_segments,
             segment_groups=segment_groups,
+            similarity_pairs=similarity_pairs,
             candidates=candidates,
             beat_volume_pct_original=(
                 (100.0 * beat_volume / max(stats["original_rms"], 1e-12)).tolist()
@@ -1128,8 +1167,7 @@ class BeatBarPhraseSectionNovelty:
             "bar_times": bar_times,
             "phrase_candidates": phrase_candidates,
             "section_candidates": selected_sections,
-            "bar_similarity": bar_sim,
-            "beat_similarity": beat_sim,
+            "similarity_pairs": similarity_pairs,
             "beat_volume_pct_original": np.asarray(result.beat_volume_pct_original, dtype=float),
             "bar_volume_pct_original": np.asarray(result.bar_volume_pct_original, dtype=float),
             "beat_syncopation": beat_sync,
@@ -1196,27 +1234,30 @@ class BeatBarPhraseSectionNovelty:
             return
 
         duration = float(plot_data["duration_s"])
+        pair_list = list(plot_data.get("similarity_pairs", []))
+
+        # Two dedicated rows per accepted pair: bars and beats. This avoids
+        # overplotting when several different segment pairs are >6/10 similar.
+        # All pair boundary lines are also drawn through the full stack.
+        n_pair_rows = max(1, 2 * len(pair_list))
+        height_pairs = 0.68 * n_pair_rows
+        row_heights = [4.4, 1.55] + [0.78] * n_pair_rows + [1.15, 1.05, 1.05, 1.30]
+        fig_h = max(10.0, 4.8 + sum(row_heights))
         fig, axes = plt.subplots(
-            12,
+            len(row_heights),
             1,
-            figsize=(19, 15),
+            figsize=(19, fig_h),
             sharex=True,
-            gridspec_kw={"height_ratios": [4.4, 1.05, 0.80, 0.80, 0.95, 0.95, 1.00, 1.05, 1.05, 1.25, 1.25, 1.75], "hspace": 0.0},
+            gridspec_kw={"height_ratios": row_heights, "hspace": 0.0},
         )
-        (
-            ax_fft,
-            ax_seg,
-            ax_bar,
-            ax_beat,
-            ax_bar_sim,
-            ax_beat_sim,
-            ax_offset,
-            ax_vol,
-            ax_sync,
-            ax_melody,
-            ax_struct,
-            ax_nov,
-        ) = axes
+        axes = np.atleast_1d(axes)
+        ax_fft = axes[0]
+        ax_nov = axes[1]
+        pair_axes = axes[2:2 + n_pair_rows]
+        ax_offset = axes[2 + n_pair_rows]
+        ax_vol = axes[3 + n_pair_rows]
+        ax_sync = axes[4 + n_pair_rows]
+        ax_melody = axes[5 + n_pair_rows]
 
         frame_times = np.asarray(plot_data["frame_times"], dtype=float)
         fft_db = np.asarray(plot_data["fft_db"], dtype=float)
@@ -1233,6 +1274,7 @@ class BeatBarPhraseSectionNovelty:
         ax_fft.set_yscale("log")
         ax_fft.set_ylim(20, min(self.sample_rate / 2.0, 16000.0))
         ax_fft.set_ylabel("FFT / Hz")
+
         stats = plot_data["stem_stats"]
         norm_db = self._db(0.90 / max(stats["stem_peak"], 1e-12))
         ax_fft.set_title(
@@ -1245,130 +1287,151 @@ class BeatBarPhraseSectionNovelty:
 
         t_bar = np.asarray(plot_data["bar_times"], dtype=float)
         t_beat = np.asarray(plot_data["beat_times"], dtype=float)
-        for t in t_beat:
-            ax_fft.axvline(float(t), color=self.BEAT_COLOR, alpha=0.12, linewidth=0.35)
-        for t in t_bar:
-            ax_fft.axvline(float(t), color=self.BAR_COLOR, alpha=0.24, linewidth=0.7)
 
-        # Segment grouping row: every non-silent repeated/related functional segment
-        # shares the exact same color used on its boundary lines and similarity row.
-        for seg in plot_data["functional_segments"]:
-            color = self._segment_color(seg)
-            if seg["kind"] == "pause":
-                color = self.PAUSE_COLOR
-                ls = "--"
-                lw = 6.0 if seg.get("grain") == "beat" else 8.0
-                y = 0.28 if seg.get("grain") == "beat" else 0.72
-            elif seg["kind"] == "transition":
-                color = self.TRANSITION_COLOR
-                ls = "-"
-                lw = 5.0 if seg.get("grain") == "beat" else 7.0
-                y = 0.28 if seg.get("grain") == "beat" else 0.72
-            else:
-                ls = "-"
-                lw = 10.0
-                y = 0.72
-            ax_seg.plot(
-                [float(seg["start_time_s"]), float(seg["end_time_s"])],
-                [y, y],
-                color=color,
-                linewidth=lw,
-                linestyle=ls,
-                solid_capstyle="butt",
-            )
-            if seg["kind"] in ("phrase", "section"):
-                ax_fft.axvline(float(seg["start_time_s"]), color=color, alpha=0.65, linewidth=1.35)
-                ax_fft.axvline(float(seg["end_time_s"]), color=color, alpha=0.45, linewidth=0.95)
-                ax_seg.text(
-                    0.5 * (float(seg["start_time_s"]) + float(seg["end_time_s"])),
-                    0.78,
-                    f"{seg['kind'].upper()} {seg['segment_id']}",
-                    color=color,
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    fontweight="bold",
+        # Novelty stays before all similarity/offset/volume rows.
+        beat_nov = np.asarray(plot_data["beat_novelty"], dtype=float)
+        bar_nov = np.asarray(plot_data["bar_novelty"], dtype=float)
+        phrase_nov = np.asarray(plot_data["phrase_novelty"], dtype=float)
+        section_nov = np.asarray(plot_data["section_novelty"], dtype=float)
+
+        if beat_nov.size:
+            cmap = plt.get_cmap("RdYlGn_r")
+            for i in range(min(len(t_beat) - 1, len(beat_nov))):
+                ax_nov.plot(
+                    t_beat[i:i + 2],
+                    beat_nov[i:i + 2],
+                    color=cmap(float(beat_nov[i])),
+                    linewidth=2.0,
+                    solid_capstyle="round",
                 )
-        ax_seg.set_ylim(0.0, 1.0)
-        ax_seg.set_yticks([0.28, 0.72])
-        ax_seg.set_yticklabels(["beat", "bar"])
-        ax_seg.set_ylabel("FUNC SEG")
-        ax_seg.text(
+        if bar_nov.size:
+            ax_nov.plot(t_bar[:len(bar_nov)], bar_nov, color="#666666", linewidth=0.9, alpha=0.55)
+        if phrase_nov.size:
+            ax_nov.plot(t_bar[:len(phrase_nov)], phrase_nov, color=self.PHRASE_COLOR, linewidth=1.0, alpha=0.60)
+        if section_nov.size:
+            ax_nov.plot(t_bar[:len(section_nov)], section_nov, color=self.SECTION_COLOR, linewidth=1.2, alpha=0.72)
+        ax_nov.set_ylim(-0.02, 1.02)
+        ax_nov.set_ylabel("NOVELTY")
+        ax_nov.text(
             0.002,
-            0.04,
-            "same color = >6/10 complete-segment similarity | orange = transition | gray = pause",
-            transform=ax_seg.transAxes,
-            fontsize=6.5,
+            0.76,
+            "green → red = beat novelty",
+            transform=ax_nov.transAxes,
+            fontsize=7,
             color="#555555",
-            va="bottom",
         )
-        ax_seg.grid(False)
 
-        # Bars row.
-        for i, t in enumerate(t_bar):
-            ax_bar.axvline(float(t), color=self.BAR_COLOR, alpha=0.75, linewidth=1.0)
-            if i % max(1, len(t_bar) // 32) == 0:
-                ax_bar.text(float(t), 0.62, f"B{i + 1}", color=self.BAR_COLOR, fontsize=6, rotation=90, va="bottom")
-        ax_bar.set_ylim(0.0, 1.0)
-        ax_bar.set_yticks([])
-        ax_bar.set_ylabel("BAR")
-        ax_bar.grid(False)
+        # Grid / structural lines. The same global Beat This! grid is used for
+        # every stem and every comparison.
+        for t in t_beat:
+            ax_fft.axvline(float(t), color=self.BEAT_COLOR, alpha=0.09, linewidth=0.3)
+            ax_nov.axvline(float(t), color=self.BEAT_COLOR, alpha=0.08, linewidth=0.3)
+        for t in t_bar:
+            ax_fft.axvline(float(t), color=self.BAR_COLOR, alpha=0.18, linewidth=0.55)
+            ax_nov.axvline(float(t), color=self.BAR_COLOR, alpha=0.16, linewidth=0.55)
 
-        # Beat row.
-        for i, t in enumerate(t_beat):
-            h = 0.75 if i % self.beats_per_bar == 0 else 0.45
-            color = self.BAR_COLOR if i % self.beats_per_bar == 0 else self.BEAT_COLOR
-            ax_beat.vlines(float(t), 0.05, h, color=color, linewidth=0.9 if i % self.beats_per_bar == 0 else 0.5)
-        ax_beat.set_ylim(0.0, 1.0)
-        ax_beat.set_yticks([])
-        ax_beat.set_ylabel("BEAT")
-        ax_beat.grid(False)
+        # Full-height pair segment boundaries. Each accepted pair has its own
+        # color, and the dedicated pair rows carry the same color labels.
+        for p in pair_list:
+            color = str(p["color"])
+            times = (
+                float(p["start_a_s"]), float(p["end_a_s"]),
+                float(p["start_b_s"]), float(p["end_b_s"]),
+            )
+            for t in times:
+                for ax in axes:
+                    ax.axvline(t, color=color, alpha=0.28, linewidth=0.9)
 
-        bar_sim = np.asarray(plot_data["bar_similarity"], dtype=float)
-        beat_sim = np.asarray(plot_data["beat_similarity"], dtype=float)
-        if bar_sim.size:
-            ax_bar_sim.plot(t_bar[:len(bar_sim)], bar_sim, drawstyle="steps-mid", color="#333333", linewidth=0.8, alpha=0.35)
-        if beat_sim.size:
-            ax_beat_sim.plot(t_beat[:len(beat_sim)], beat_sim, color="#777777", linewidth=0.7, alpha=0.30)
-        for seg in plot_data["functional_segments"]:
-            if (
-                seg.get("grain") == "bar"
-                and seg["kind"] in ("phrase", "section")
-                and seg.get("similarity_dimensions", 0) >= 7
-                and seg.get("group_id") is not None
-            ):
-                c = self._segment_color(seg)
-                sb = int(max(0, seg["start_bar"]))
-                eb = int(min(len(bar_sim), seg["end_bar"]))
-                if eb > sb and bar_sim.size:
-                    ax_bar_sim.plot(
-                        t_bar[sb:eb],
-                        bar_sim[sb:eb],
-                        drawstyle="steps-mid",
-                        color=c,
+        # Similarity rows: one BAR row + one BEAT row for every direct >6/10
+        # complete-segment pair. No pair is selected over another.
+        if pair_list:
+            for pair_index, p in enumerate(pair_list):
+                ax_b = pair_axes[2 * pair_index]
+                ax_bt = pair_axes[2 * pair_index + 1]
+                color = str(p["color"])
+                label = (
+                    f"{p['pair_id']}  {p['segment_a']} ↔ {p['segment_b']}  "
+                    f"{p['dimensions_similar']}/10"
+                )
+
+                for ax, row_label in ((ax_b, "BAR"), (ax_bt, "BEAT")):
+                    ax.text(
+                        0.002,
+                        0.80,
+                        label,
+                        transform=ax.transAxes,
+                        color=color,
+                        fontsize=7.5,
+                        fontweight="bold",
+                        va="top",
+                    )
+                    ax.set_yticks([])
+
+                # Mark the paired segment extents in the shared pair color.
+                for ax in (ax_b, ax_bt):
+                    ax.axvspan(p["start_a_s"], p["end_a_s"], color=color, alpha=0.08)
+                    ax.axvspan(p["start_b_s"], p["end_b_s"], color=color, alpha=0.08)
+                    ax.axvline(p["start_a_s"], color=color, linewidth=2.0, alpha=0.85)
+                    ax.axvline(p["end_a_s"], color=color, linewidth=1.1, alpha=0.65)
+                    ax.axvline(p["start_b_s"], color=color, linewidth=2.0, alpha=0.85)
+                    ax.axvline(p["end_b_s"], color=color, linewidth=1.1, alpha=0.65)
+
+                for m in p.get("bar_matches", []):
+                    ai = int(m["a_bar_index"])
+                    bi = int(m["b_bar_index"])
+                    sa, ea = self._bar_times_from_index(ai, t_bar, bar_ranges=None)
+                    sb, eb = self._bar_times_from_index(bi, t_bar, bar_ranges=None)
+                    # A connector is intentionally not drawn across the full
+                    # plot; the paired extents and score bar encode the mapping.
+                    ax_b.plot(
+                        [sa, sb],
+                        [0.72, 0.72],
+                        color=color,
+                        linewidth=2.5,
+                        alpha=float(0.25 + 0.70 * m["score"]),
+                    )
+                    ax_b.scatter([sa, sb], [0.72, 0.72], color=color, s=10)
+
+                for m in p.get("beat_matches", []):
+                    ai = int(m["a_beat_index"])
+                    bi = int(m["b_beat_index"])
+                    if ai >= len(t_beat) or bi >= len(t_beat):
+                        continue
+                    sa, sb = float(t_beat[ai]), float(t_beat[bi])
+                    ax_bt.plot(
+                        [sa, sb],
+                        [0.65, 0.65],
+                        color=color,
                         linewidth=2.0,
+                        alpha=float(0.25 + 0.70 * m["score"]),
                     )
-                sbt = int(max(0, seg["start_beat"]))
-                ebt = int(min(len(beat_sim), seg["end_beat"]))
-                if ebt > sbt and beat_sim.size:
-                    ax_beat_sim.plot(
-                        t_beat[sbt:ebt],
-                        beat_sim[sbt:ebt],
-                        color=c,
-                        linewidth=1.7,
-                    )
-                ax_bar_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.055)
-                ax_beat_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.055)
-        for ax, label in ((ax_bar_sim, "BAR SIM"), (ax_beat_sim, "BEAT SIM")):
-            ax.set_ylim(-0.02, 1.02)
-            ax.set_yticks([0.0, 0.5, 1.0])
-            ax.set_ylabel(label)
+                    ax_bt.scatter([sa, sb], [0.65, 0.65], color=color, s=8)
 
-        # Early/late offsets: start and end are measured in beats relative to
-        # the nominal bar boundary. Negative = early, positive = late.
+                ax_b.set_ylim(0.0, 1.0)
+                ax_bt.set_ylim(0.0, 1.0)
+                ax_b.set_ylabel("BAR")
+                ax_bt.set_ylabel("BEAT")
+        else:
+            pair_axes[0].text(
+                0.5,
+                0.5,
+                "no complete functional segment pairs >6/10",
+                transform=pair_axes[0].transAxes,
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="#666666",
+            )
+            pair_axes[0].set_yticks([])
+            pair_axes[0].set_ylabel("SIM")
+            for ax in pair_axes:
+                ax.set_ylim(0.0, 1.0)
+                ax.set_yticks([])
+
+        # Early/late offsets come immediately after similarity rows.
         ax_offset.axhline(0.0, color="#666666", linewidth=0.7)
         for seg in plot_data["functional_segments"]:
-            if seg["kind"] not in ("phrase", "section"):
+            if seg.get("grain") != "bar" or seg["kind"] not in ("phrase", "section"):
                 continue
             c = self._segment_color(seg)
             tmid = 0.5 * (seg["start_time_s"] + seg["end_time_s"])
@@ -1382,7 +1445,7 @@ class BeatBarPhraseSectionNovelty:
             ax_offset.scatter([tmid], [seg["end_offset_beats_from_bar"]], marker="v", color=c, s=20, zorder=4)
         ax_offset.set_ylim(-1.5, 1.5)
         ax_offset.set_yticks([-1.0, 0.0, 1.0])
-        ax_offset.set_ylabel("BAR OFF")
+        ax_offset.set_ylabel("EARLY/LATE")
         ax_offset.set_yticklabels(["-1 beat", "on bar", "+1 beat"])
 
         beat_vol = np.asarray(plot_data["beat_volume_pct_original"], dtype=float)
@@ -1391,7 +1454,7 @@ class BeatBarPhraseSectionNovelty:
             ax_vol.fill_between(t_beat[:len(beat_vol)], 0.0, beat_vol, color="#aaaaaa", alpha=0.16)
         ax_vol.set_ylim(0.0, max(1.0, float(np.max(beat_vol) * 1.10) if beat_vol.size else 1.0))
         ax_vol.set_ylabel("VOL/BEAT")
-        ax_vol.text(0.002, 0.80, "% orig RMS", transform=ax_vol.transAxes, fontsize=7, color="#555555")
+        ax_vol.text(0.002, 0.80, "% original RMS", transform=ax_vol.transAxes, fontsize=7, color="#555555")
 
         sync = np.asarray(plot_data["beat_syncopation"], dtype=float)
         if sync.size:
@@ -1404,62 +1467,55 @@ class BeatBarPhraseSectionNovelty:
         melody = np.asarray(plot_data["melody_midi"], dtype=float)
         voiced = melody > 0.0
         if melody.size and np.any(voiced):
-            ax_melody.plot(t_beat[voiced], melody[voiced], color="#2c7fb8", linewidth=1.8, marker=".", markersize=3)
+            ax_melody.plot(
+                t_beat[voiced],
+                melody[voiced],
+                color="#2c7fb8",
+                linewidth=1.8,
+                marker=".",
+                markersize=3,
+            )
             ax_melody.set_ylim(
                 max(20.0, float(np.min(melody[voiced]) - 3.0)),
                 min(120.0, float(np.max(melody[voiced]) + 3.0)),
             )
         else:
-            ax_melody.text(0.5, 0.5, "no stable pitch evidence", transform=ax_melody.transAxes, ha="center", va="center", fontsize=8, color="#666666")
+            ax_melody.text(
+                0.5,
+                0.5,
+                "no stable pitch evidence",
+                transform=ax_melody.transAxes,
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="#666666",
+            )
             ax_melody.set_ylim(30.0, 90.0)
         ax_melody.set_ylabel("MELODY / MIDI")
-
-        # Structural evidence row: green->red beat novelty plus bar/phrase/section
-        # curves, with group colors on functional boundaries.
-        beat_nov = np.asarray(plot_data["beat_novelty"], dtype=float)
-        cmap = plt.get_cmap("RdYlGn_r")
-        if len(t_beat) >= 2:
-            for i in range(min(len(t_beat) - 1, len(beat_nov))):
-                ax_struct.plot(
-                    t_beat[i:i + 2],
-                    beat_nov[i:i + 2],
-                    color=cmap(float(beat_nov[i])),
-                    linewidth=2.0,
-                    solid_capstyle="round",
-                )
-        bar_nov = np.asarray(plot_data["bar_novelty"], dtype=float)
-        if bar_nov.size:
-            ax_struct.plot(t_bar[:len(bar_nov)], bar_nov, color="#666666", linewidth=1.0, alpha=0.60)
-        phrase_nov = np.asarray(plot_data["phrase_novelty"], dtype=float)
-        if phrase_nov.size:
-            ax_struct.plot(t_bar[:len(phrase_nov)], phrase_nov, color=self.PHRASE_COLOR, linewidth=1.0, alpha=0.55)
-        section_nov = np.asarray(plot_data["section_novelty"], dtype=float)
-        if section_nov.size:
-            ax_struct.plot(t_bar[:len(section_nov)], section_nov, color=self.SECTION_COLOR, linewidth=1.15, alpha=0.72)
-        ax_struct.set_ylim(-0.02, 1.02)
-        ax_struct.set_ylabel("STRUCT")
-        ax_struct.text(0.002, 0.78, "green→red = novelty", transform=ax_struct.transAxes, fontsize=7, color="#555555")
-
-        # Final novelty row with explicit segment labels.
-        if beat_nov.size:
-            ax_nov.plot(t_beat[:len(beat_nov)], beat_nov, color="#2ca25f", linewidth=1.0, alpha=0.75)
-            ax_nov.fill_between(t_beat[:len(beat_nov)], 0.0, beat_nov, color="#99d8c9", alpha=0.18)
-        self._plot_boundary_overlay(ax_nov, plot_data, include_beat=True)
-        ax_nov.set_ylim(-0.02, 1.02)
-        ax_nov.set_ylabel("NOVELTY")
-        ax_nov.set_xlabel("Time (s)")
-        ax_nov.set_xlim(0.0, max(duration, 0.1))
 
         for ax in axes:
             ax.grid(axis="y", alpha=0.12, linewidth=0.5)
             ax.tick_params(axis="x", labelsize=7)
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
+        ax_melody.set_xlabel("Time (s)")
 
         fig.subplots_adjust(left=0.055, right=0.995, top=0.965, bottom=0.055, hspace=0.0)
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, dpi=160, bbox_inches="tight")
         plt.close(fig)
+
+    @staticmethod
+    def _bar_times_from_index(index: int, bar_times: np.ndarray, bar_ranges: Any = None) -> Tuple[float, float]:
+        i = int(index)
+        if i < 0 or i >= len(bar_times):
+            return 0.0, 0.0
+        start = float(bar_times[i])
+        if i + 1 < len(bar_times):
+            end = float(bar_times[i + 1])
+        else:
+            end = start
+        return start, end
 
     def run_and_export(
         self,
@@ -1488,8 +1544,10 @@ class BeatBarPhraseSectionNovelty:
         payload["notes"] = [
             "Beat and bar positions are locked to the global Beat This! grid.",
             "Functional similarity compares complete non-silent segments using 10 beat-sequence dimensions.",
-            "A match requires 7/10 dimensions at or above the similarity threshold.",
-            "Pause/silence segments are excluded from similarity grouping.",
+            "Every direct pair with 7/10 through 10/10 matching dimensions is retained; no best-pair selection is performed.",
+            "Pause/silence segments are excluded from similarity matching.",
+            "Bar and beat comparisons use the same global Beat This! grid and normalized within-segment positions.",
+            "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
             "Plot FFT is peak-normalized for readability; the title reports stem RMS as a percentage of original-mix RMS.",
         ]
         if not plot_data.get("skip_plot"):
