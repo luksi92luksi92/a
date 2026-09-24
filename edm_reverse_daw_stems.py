@@ -148,30 +148,71 @@ def _run_novelty(stem_name, x, sample_rate, beat_grid, args):
     novelty_json = json_base.with_suffix("")
     novelty_json = novelty_json.parent / f"{novelty_json.name}_{safe}_novelty.json"
     print(f"[AWM/{stem_name}] beat/bar/phrase/section novelty: RUNNING")
-    payload = analyzer.run_and_export(x, beat_grid, str(plot_path), str(novelty_json), stem_name)
+    payload = analyzer.run_and_export(
+        x,
+        beat_grid,
+        str(plot_path),
+        str(novelty_json),
+        stem_name,
+        original_audio=original_audio,
+    )
     print(
         f"[AWM/{stem_name}] novelty: DONE "
         f"beat_candidates={sum(1 for c in payload['candidates'] if c['level']=='beat' and c['selected'])} "
         f"bar_candidates={sum(1 for c in payload['candidates'] if c['level']=='bar' and c['selected'])} "
         f"phrase_candidates={sum(1 for c in payload['candidates'] if c['level']=='phrase' and c['selected'])} "
-        f"section_candidates={sum(1 for c in payload['candidates'] if c['level']=='section' and c['selected'])}"
+        f"section_candidates={sum(1 for c in payload['candidates'] if c['level']=='section' and c['selected'])} "
+        f"volume_of_original={payload['stem_stats']['volume_pct_of_original_rms']:.1f}%"
     )
-    print(f"[AWM/{stem_name}] novelty plot={plot_path}")
+    if payload.get('plot_skipped'):
+        print(
+            f"[AWM/{stem_name}] plot: SKIPPED ({payload.get('plot_skip_reason', 'inaudible stem')}); "
+            f"threshold={payload['stem_stats']['threshold_dbfs']:.1f} dBFS"
+        )
+    else:
+        print(f"[AWM/{stem_name}] novelty plot={plot_path}")
     return payload
 
 
-def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
+def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args, original_audio=None):
     """Run the complete perception stack on exactly one separated stem."""
+    x = np.asarray(stem_audio, dtype=np.float32).reshape(-1)
+    print(f"\n{'#' * 96}\nSTEM: {stem_name}\n{'#' * 96}")
+
+    # Run stem gating/structure first. Empty/inaudible/noise-only stems never
+    # enter the expensive AWM path.
+    novelty = _run_novelty(stem_name, x, sample_rate, beat_grid, args, original_audio=original_audio)
+    if novelty is not None and novelty.get("plot_skipped"):
+        empty_snapshot = {
+            "object_metadata": [],
+            "elements": [],
+            "patterns": [],
+            "sections": [],
+            "arrangement": None,
+            "edm": {"object_detection": "disabled"},
+        }
+        print(f"[AWM/{stem_name}] object detection: SKIPPED (stem not audible)")
+        return {
+            "snapshot": empty_snapshot,
+            "beat_aligned_features": {},
+            "stem_export": None,
+            "essentia_frames": 0,
+            "novelty_structure": novelty,
+        }
+
     params = _core.awm.Parameters()
     model = _core.awm.AuditoryWorldModel(params)
     if beat_grid is not None:
         install_canonical_beat_grid(model, beat_grid)
 
-    x = np.asarray(stem_audio, dtype=np.float32).reshape(-1)
-    print(f"\n{'#' * 96}\nSTEM: {stem_name}\n{'#' * 96}")
-    print(f"[AWM/{stem_name}] physical + objects + tracking: RUNNING")
+    # Explicitly disable the ObjectTracker. Physical/audio evidence, rhythm,
+    # timbre and the separate novelty/structure analysis still run, but no
+    # sound-object candidates are generated or tracked.
+    model.tracker.step = lambda observations, t: None
+    print(f"[AWM/{stem_name}] object detection/tracking: DISABLED")
+    print(f"[AWM/{stem_name}] physical + event/rhythm evidence: RUNNING")
     model.run(x, use_stem_separation=False)
-    print(f"[AWM/{stem_name}] physical + objects + tracking: DONE")
+    print(f"[AWM/{stem_name}] physical + event/rhythm evidence: DONE")
 
     clean_foundation_patterns(model.world)
     if beat_grid is None:
@@ -207,7 +248,6 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args):
     edm = _core.EDMReverseDAW(model.world)
     snapshot = edm.run()
 
-    novelty = _run_novelty(stem_name, x, sample_rate, beat_grid, args)
     if novelty is not None:
         snapshot["novelty_structure"] = novelty
         model.world._novelty_structure = novelty
@@ -291,7 +331,12 @@ def main():
     results = {}
     for stem_name in sorted(stems):
         results[stem_name] = analyze_one_stem(
-            stem_name, stems[stem_name], params.sample_rate, beat_grid, args
+            stem_name,
+            stems[stem_name],
+            params.sample_rate,
+            beat_grid,
+            args,
+            original_audio=audio,
         )
 
     result = {
@@ -334,7 +379,8 @@ def main():
         print(
             f"  {name:<8} objects={len(snap['object_metadata']):>4} "
             f"elements={len(snap['elements']):>3} patterns={len(snap['patterns']):>3} "
-            f"sections={len(snap['sections']):>3}"
+            f"sections={len(snap['sections']):>3} "
+            f"object_detection=DISABLED"
         )
 
     return results
