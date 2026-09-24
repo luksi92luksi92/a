@@ -1325,6 +1325,41 @@ class BeatBarPhraseSectionNovelty:
             ax_nov.plot(t_bar[:len(phrase_nov)], phrase_nov, color=self.PHRASE_COLOR, linewidth=1.0, alpha=0.60)
         if section_nov.size:
             ax_nov.plot(t_bar[:len(section_nov)], section_nov, color=self.SECTION_COLOR, linewidth=1.2, alpha=0.72)
+
+        # Keep the original structural annotation style on the novelty row.
+        for idx, cand in enumerate(plot_data.get("phrase_candidates", [])):
+            if not cand.selected:
+                continue
+            t = float(cand.time_s)
+            ax_nov.axvline(t, color=self.PHRASE_COLOR, alpha=0.72, linewidth=1.5)
+            ax_nov.text(
+                t,
+                0.92,
+                f"PHRASE {idx + 1}",
+                transform=ax_nov.get_xaxis_transform(),
+                color=self.PHRASE_COLOR,
+                rotation=90,
+                va="top",
+                ha="right",
+                fontsize=7.5,
+                fontweight="bold",
+            )
+        for idx, cand in enumerate(plot_data.get("section_candidates", [])):
+            t = float(cand.time_s)
+            ax_nov.axvline(t, color=self.SECTION_COLOR, alpha=0.82, linewidth=2.4)
+            ax_nov.text(
+                t,
+                0.98,
+                f"SECTION {idx + 1}",
+                transform=ax_nov.get_xaxis_transform(),
+                color=self.SECTION_COLOR,
+                rotation=90,
+                va="top",
+                ha="right",
+                fontsize=8,
+                fontweight="bold",
+            )
+
         ax_nov.set_ylim(-0.02, 1.02)
         ax_nov.set_ylabel("NOVELTY")
         ax_nov.text(
@@ -1345,8 +1380,23 @@ class BeatBarPhraseSectionNovelty:
             ax_fft.axvline(float(t), color=self.BAR_COLOR, alpha=0.18, linewidth=0.55)
             ax_nov.axvline(float(t), color=self.BAR_COLOR, alpha=0.16, linewidth=0.55)
 
-        # Full-height pair segment boundaries. Each accepted pair has its own
-        # color, and the dedicated pair rows carry the same color labels.
+        # All functional segment boundaries extend through the whole plot.
+        # Matched segments use their pair color; unmatched phrase/section/transition
+        # spans use the regular structural colors.
+        for seg in plot_data["functional_segments"]:
+            if seg.get("grain") != "bar":
+                continue
+            if seg["kind"] == "pause":
+                continue
+            color = self._segment_color(seg)
+            if seg["kind"] == "transition":
+                color = self.TRANSITION_COLOR
+            for t in (float(seg["start_time_s"]), float(seg["end_time_s"])):
+                for ax in axes:
+                    ax.axvline(t, color=color, alpha=0.16, linewidth=0.65)
+
+        # Matched pair boundaries are stronger and use the exact same pair color
+        # on both member segments.
         for p in pair_list:
             color = str(p["color"])
             times = (
