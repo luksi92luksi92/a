@@ -1114,6 +1114,21 @@ class BeatBarPhraseSectionNovelty:
             bar_ranges,
         )
 
+        # Backward-compatible aggregate similarity arrays: maximum direct-pair
+        # score at each global bar/beat position. The plot itself uses the full
+        # pair-specific data and never selects a winner.
+        beat_sim = np.zeros(len(beat_F), dtype=float)
+        bar_sim = np.zeros(len(bar_F), dtype=float)
+        for pair in similarity_pairs:
+            for match in pair.get("beat_matches", []):
+                idx = int(match["a_beat_index"])
+                if 0 <= idx < len(beat_sim):
+                    beat_sim[idx] = max(beat_sim[idx], float(match["score"]))
+            for match in pair.get("bar_matches", []):
+                idx = int(match["a_bar_index"])
+                if 0 <= idx < len(bar_sim):
+                    bar_sim[idx] = max(bar_sim[idx], float(match["score"]))
+
         result = NoveltyStructureResult(
             beat_novelty=beat_nov.tolist(),
             bar_novelty=bar_nov.tolist(),
@@ -1548,6 +1563,7 @@ class BeatBarPhraseSectionNovelty:
             "Pause/silence segments are excluded from similarity matching.",
             "Bar and beat comparisons use the same global Beat This! grid and normalized within-segment positions.",
             "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
+            "Pair rows are repeated as needed so different accepted pairs do not visually overwrite one another.",
             "Plot FFT is peak-normalized for readability; the title reports stem RMS as a percentage of original-mix RMS.",
         ]
         if not plot_data.get("skip_plot"):
