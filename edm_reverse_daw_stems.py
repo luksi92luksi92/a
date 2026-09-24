@@ -125,7 +125,7 @@ def _print_structure_state_fixed(model):
         )
 
 
-def _run_novelty(stem_name, x, sample_rate, beat_grid, args):
+def _run_novelty(stem_name, x, sample_rate, beat_grid, args, original_audio=None):
     if beat_grid is None:
         print(f"[AWM/{stem_name}] novelty: SKIPPED (no canonical Beat This! grid)")
         return None
@@ -139,6 +139,13 @@ def _run_novelty(stem_name, x, sample_rate, beat_grid, args):
         min_section_bars=4,
         section_refractory_bars=2,
         section_threshold=0.48,
+        silence_dbfs=-60.0,
+        inaudible_relative_db=-48.0,
+        noise_flatness=0.94,
+        noise_dynamic_db=7.0,
+        transition_threshold=0.60,
+        similarity_threshold=0.60,
+        similarity_dimensions_required=7,
     )
     plot_dir = Path(args.plot_dir or "stem_activity")
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -346,6 +353,7 @@ def main():
             "beat_tracker": "Beat This!",
             "analysis_source": "Demucs stems",
             "mix_awmpipeline": False,
+            "object_detection": False,
             "independent_stem_worlds": True,
             "shared_beat_grid": beat_grid.as_dict() if beat_grid is not None else None,
             "novelty_structure": "beat_bar_phrase_section_v1",
