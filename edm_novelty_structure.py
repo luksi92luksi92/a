@@ -567,6 +567,7 @@ class BeatBarPhraseSectionNovelty:
                 "end_bar": int(nominal_end_bar),
                 "start_beat": int(b0),
                 "end_beat": int(b1),
+                "grain": "bar",
                 "start_time_s": start_t,
                 "end_time_s": end_t,
                 "actual_start_time_s": actual_start,
@@ -593,6 +594,59 @@ class BeatBarPhraseSectionNovelty:
             ],
             dtype=bool,
         )
+
+        # Beat-granularity pause/transition spans are kept as functional
+        # segments too.  These never enter complete-segment similarity grouping.
+        def classify_beat_run(start_beat: int, end_beat: int, kind: str, reason: str) -> None:
+            if end_beat <= start_beat:
+                return
+            start_t = float(beat_times[start_beat])
+            end_t = float(beat_times[min(end_beat, len(beat_times) - 1)])
+            if end_beat < len(beat_times):
+                end_t = float(beat_times[end_beat])
+            segments.append({
+                "segment_id": f"seg_{len(segments):04d}",
+                "kind": kind,
+                "grain": "beat",
+                "reason": reason,
+                "start_bar": int(start_beat // max(self.beats_per_bar, 1)),
+                "end_bar": int(math.ceil(end_beat / max(self.beats_per_bar, 1))),
+                "start_beat": int(start_beat),
+                "end_beat": int(end_beat),
+                "start_time_s": start_t,
+                "end_time_s": end_t,
+                "actual_start_time_s": start_t,
+                "actual_end_time_s": end_t,
+                "start_offset_beats_from_bar": 0.0,
+                "end_offset_beats_from_bar": 0.0,
+                "group_id": None,
+                "group_color": self.PAUSE_COLOR if kind == "pause" else self.TRANSITION_COLOR,
+                "similarity_score": 0.0,
+                "similarity_dimensions": 0,
+            })
+
+        i = 0
+        while i < len(beat_silent):
+            if not beat_silent[i]:
+                i += 1
+                continue
+            j = i + 1
+            while j < len(beat_silent) and beat_silent[j]:
+                j += 1
+            classify_beat_run(i, j, "pause", "beat below audible threshold")
+            i = j
+
+        i = 0
+        active_transition = np.logical_and(beat_transition, np.logical_not(beat_silent))
+        while i < len(active_transition):
+            if not active_transition[i]:
+                i += 1
+                continue
+            j = i + 1
+            while j < len(active_transition) and active_transition[j]:
+                j += 1
+            classify_beat_run(i, j, "transition", "beat-scale novelty/energy transition")
+            i = j
 
         # First-class pauses: continuous silent bars are their own functional spans.
         i = 0
@@ -722,7 +776,8 @@ class BeatBarPhraseSectionNovelty:
     ) -> List[Dict[str, Any]]:
         eligible = [
             s for s in segments
-            if s["kind"] in ("phrase", "section", "transition")
+            if s["grain"] == "bar"
+            and s["kind"] in ("phrase", "section", "transition")
             and s["end_beat"] > s["start_beat"]
         ]
         parent = list(range(len(eligible)))
@@ -809,7 +864,7 @@ class BeatBarPhraseSectionNovelty:
         bar_sim = np.zeros(len(bar_F), dtype=float)
         grouped = {}
         for s in segments:
-            if s.get("group_id") is not None and s["kind"] in ("phrase", "section", "transition"):
+            if s.get("group_id") is not None and s.get("grain") == "bar" and s["kind"] in ("phrase", "section", "transition"):
                 grouped.setdefault(int(s["group_id"]), []).append(s)
 
         for members in grouped.values():
@@ -1199,17 +1254,20 @@ class BeatBarPhraseSectionNovelty:
             if seg["kind"] == "pause":
                 color = self.PAUSE_COLOR
                 ls = "--"
-                lw = 8.0
+                lw = 6.0 if seg.get("grain") == "beat" else 8.0
+                y = 0.28 if seg.get("grain") == "beat" else 0.72
             elif seg["kind"] == "transition":
                 color = self.TRANSITION_COLOR
                 ls = "-"
-                lw = 7.0
+                lw = 5.0 if seg.get("grain") == "beat" else 7.0
+                y = 0.28 if seg.get("grain") == "beat" else 0.72
             else:
                 ls = "-"
                 lw = 10.0
+                y = 0.72
             ax_seg.plot(
                 [float(seg["start_time_s"]), float(seg["end_time_s"])],
-                [0.5, 0.5],
+                [y, y],
                 color=color,
                 linewidth=lw,
                 linestyle=ls,
@@ -1229,9 +1287,9 @@ class BeatBarPhraseSectionNovelty:
                     fontweight="bold",
                 )
         ax_seg.set_ylim(0.0, 1.0)
-        ax_seg.set_yticks([0.5])
-        ax_seg.set_yticklabels([">6/10 GROUP"])
-        ax_seg.set_ylabel("SEG")
+        ax_seg.set_yticks([0.28, 0.72])
+        ax_seg.set_yticklabels(["beat", "bar"])
+        ax_seg.set_ylabel("FUNC SEG")
         ax_seg.grid(False)
 
         # Bars row.
@@ -1257,14 +1315,38 @@ class BeatBarPhraseSectionNovelty:
         bar_sim = np.asarray(plot_data["bar_similarity"], dtype=float)
         beat_sim = np.asarray(plot_data["beat_similarity"], dtype=float)
         if bar_sim.size:
-            ax_bar_sim.plot(t_bar[:len(bar_sim)], bar_sim, drawstyle="steps-mid", color="#333333", linewidth=1.6)
+            ax_bar_sim.plot(t_bar[:len(bar_sim)], bar_sim, drawstyle="steps-mid", color="#333333", linewidth=0.8, alpha=0.35)
         if beat_sim.size:
-            ax_beat_sim.plot(t_beat[:len(beat_sim)], beat_sim, color="#777777", linewidth=1.1)
+            ax_beat_sim.plot(t_beat[:len(beat_sim)], beat_sim, color="#777777", linewidth=0.7, alpha=0.30)
         for seg in plot_data["functional_segments"]:
-            if seg["kind"] in ("phrase", "section") and seg.get("similarity_dimensions", 0) >= 7:
+            if (
+                seg.get("grain") == "bar"
+                and seg["kind"] in ("phrase", "section")
+                and seg.get("similarity_dimensions", 0) >= 7
+                and seg.get("group_id") is not None
+            ):
                 c = self._segment_color(seg)
-                ax_bar_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.07)
-                ax_beat_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.07)
+                sb = int(max(0, seg["start_bar"]))
+                eb = int(min(len(bar_sim), seg["end_bar"]))
+                if eb > sb and bar_sim.size:
+                    ax_bar_sim.plot(
+                        t_bar[sb:eb],
+                        bar_sim[sb:eb],
+                        drawstyle="steps-mid",
+                        color=c,
+                        linewidth=2.0,
+                    )
+                sbt = int(max(0, seg["start_beat"]))
+                ebt = int(min(len(beat_sim), seg["end_beat"]))
+                if ebt > sbt and beat_sim.size:
+                    ax_beat_sim.plot(
+                        t_beat[sbt:ebt],
+                        beat_sim[sbt:ebt],
+                        color=c,
+                        linewidth=1.7,
+                    )
+                ax_bar_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.055)
+                ax_beat_sim.axvspan(seg["start_time_s"], seg["end_time_s"], color=c, alpha=0.055)
         for ax, label in ((ax_bar_sim, "BAR SIM"), (ax_beat_sim, "BEAT SIM")):
             ax.set_ylim(-0.02, 1.02)
             ax.set_yticks([0.0, 0.5, 1.0])
