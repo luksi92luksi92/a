@@ -665,6 +665,9 @@ class BeatBarPhraseSectionNovelty:
         for idx in section_boundaries_idx:
             cuts.add(int(max(0, min(n_bars, idx))))
         for idx in range(n_bars):
+            if bar_pause[idx]:
+                cuts.add(idx)
+                cuts.add(idx + 1)
             if bar_transition[idx]:
                 cuts.add(idx)
                 cuts.add(idx + 1)
@@ -1290,6 +1293,15 @@ class BeatBarPhraseSectionNovelty:
         ax_seg.set_yticks([0.28, 0.72])
         ax_seg.set_yticklabels(["beat", "bar"])
         ax_seg.set_ylabel("FUNC SEG")
+        ax_seg.text(
+            0.002,
+            0.04,
+            "same color = >6/10 complete-segment similarity | orange = transition | gray = pause",
+            transform=ax_seg.transAxes,
+            fontsize=6.5,
+            color="#555555",
+            va="bottom",
+        )
         ax_seg.grid(False)
 
         # Bars row.
