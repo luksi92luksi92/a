@@ -842,14 +842,12 @@ class BeatBarPhraseSectionNovelty:
         pair for the source-segment similarity rows. Segments may participate
         in multiple pairs.
         """
+        # Similarity is phrase-only. Sections and transitions remain
+        # structural annotations but never enter similarity matching.
         eligible = [
             s for s in segments
             if s.get("grain") == "bar"
-            and s["kind"] in ("phrase", "section", "transition")
-            and not (
-                s["kind"] == "transition"
-                and s.get("subtype") == "dropout"
-            )
+            and s["kind"] == "phrase"
             and s["end_beat"] > s["start_beat"]
         ]
         signatures = [
