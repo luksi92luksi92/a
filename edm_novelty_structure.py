@@ -598,7 +598,7 @@ class BeatBarPhraseSectionNovelty:
 
         bar_dropout = np.asarray(
             [
-                bool(np.all(beat_dropout[s:e])) if e > s else False
+                bool(np.mean(beat_dropout[s:e]) >= 0.50) if e > s else False
                 for s, e in bar_ranges
             ],
             dtype=bool,
@@ -739,7 +739,7 @@ class BeatBarPhraseSectionNovelty:
             else:
                 classify_run(a, b, "section", "active functional span")
 
-        # Add phrase-level functional spans, but never span a pause.
+        # Add phrase-level local evidence; dropouts may occur inside a phrase.
         for c in phrase_candidates:
             if not c.selected:
                 continue
@@ -1061,11 +1061,17 @@ class BeatBarPhraseSectionNovelty:
         )
         beat_volume_db = self._running_db(beat_volume)
         beat_baseline_db = np.full_like(beat_volume_db, -120.0)
-        lookback_beats = max(2, self.context_bars * self.beats_per_bar)
+        lookback_beats = max(8, self.context_bars * self.beats_per_bar * 2)
         for i in range(len(beat_volume_db)):
             lo = max(0, i - lookback_beats)
             reference = beat_volume_db[lo:i]
-            beat_baseline_db[i] = float(np.median(reference)) if reference.size else float(beat_volume_db[i])
+            # The upper quartile resists contamination when several consecutive
+            # beats are already inside the dropout.
+            beat_baseline_db[i] = (
+                float(np.percentile(reference, 75.0))
+                if reference.size
+                else float(beat_volume_db[i])
+            )
         # A dropout requires an active local baseline and a relative reduction;
         # it is deliberately softer than an absolute-silence test.
         beat_dropout = (
