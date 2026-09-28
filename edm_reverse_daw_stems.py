@@ -166,8 +166,8 @@ def _run_novelty(stem_name, x, sample_rate, beat_grid, args, original_audio=None
         f"[AWM/{stem_name}] novelty: DONE "
         f"beat_candidates={sum(1 for c in payload['candidates'] if c['level']=='beat' and c['selected'])} "
         f"bar_candidates={sum(1 for c in payload['candidates'] if c['level']=='bar' and c['selected'])} "
-        f"phrase_candidates={sum(1 for c in payload['candidates'] if c['level']=='phrase' and c['selected'])} "
-        f"section_candidates={sum(1 for c in payload['candidates'] if c['level']=='section' and c['selected'])} "
+        f"phrase_evidence={sum(1 for c in payload['candidates'] if c['level']=='phrase' and c['selected'])} "
+        f"section_evidence={sum(1 for c in payload['candidates'] if c['level']=='section' and c['selected'])} "
         f"volume_of_original={payload['stem_stats']['volume_pct_of_original_rms']:.1f}%"
     )
     if payload.get('plot_skipped'):
@@ -423,7 +423,7 @@ def main():
         print(
             f"  {name:<8} objects={len(snap['object_metadata']):>4} "
             f"elements={len(snap['elements']):>3} patterns={len(snap['patterns']):>3} "
-            f"sections={len(snap['sections']):>3} "
+            f"local_sections={len(snap['sections']):>3} "
             f"object_detection=DISABLED"
         )
 
