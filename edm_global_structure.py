@@ -25,13 +25,17 @@ class GlobalStructureFusion:
         section_threshold: float = 0.48,
         phrase_min_support: float = 0.25,
         section_min_support: float = 0.25,
-        section_refractory_bars: int = 4,
+        section_refractory_bars: int = 16,
+        min_section_bars: int = 16,
+        max_section_bars: int = 128,
     ) -> None:
         self.phrase_threshold = float(phrase_threshold)
         self.section_threshold = float(section_threshold)
         self.phrase_min_support = float(phrase_min_support)
         self.section_min_support = float(section_min_support)
-        self.section_refractory_bars = int(max(section_refractory_bars, 1))
+        self.section_refractory_bars = int(max(section_refractory_bars, 16))
+        self.min_section_bars = int(max(min_section_bars, 16))
+        self.max_section_bars = int(max(max_section_bars, self.min_section_bars))
 
     @staticmethod
     def _pad(values: Sequence[float], n: int) -> np.ndarray:
@@ -193,6 +197,49 @@ class GlobalStructureFusion:
             refractory=self.section_refractory_bars,
         )
 
+        # Canonical sections must be at least 16 bars apart. Remove boundaries
+        # that would create shorter sections, including an early boundary before
+        # the minimum initial section length.
+        accepted_sections: List[Dict[str, Any]] = []
+        last_idx = 0
+        for row in section_boundaries:
+            idx = int(row["bar_index"])
+            if idx - last_idx < self.min_section_bars:
+                continue
+            accepted_sections.append(row)
+            last_idx = idx
+        section_boundaries = accepted_sections
+
+        # A section may not exceed 128 bars. Long intervals are split at the
+        # maximum length even when no novelty peak exists at that exact point.
+        length_capped_boundaries: List[Dict[str, Any]] = []
+        last_idx = 0
+        for row in section_boundaries:
+            idx = int(row["bar_index"])
+            while idx - last_idx > self.max_section_bars:
+                last_idx += self.max_section_bars
+                length_capped_boundaries.append({
+                    "bar_index": int(last_idx),
+                    "score": 0.0,
+                    "support": 0.0,
+                    "time_s": float(bars[last_idx]),
+                    "source_stems": [],
+                    "type": "section_length_cap",
+                })
+            length_capped_boundaries.append(row)
+            last_idx = idx
+        while n_bars - last_idx > self.max_section_bars:
+            last_idx += self.max_section_bars
+            length_capped_boundaries.append({
+                "bar_index": int(last_idx),
+                "score": 0.0,
+                "support": 0.0,
+                "time_s": float(bars[last_idx]),
+                "source_stems": [],
+                "type": "section_length_cap",
+            })
+        section_boundaries = length_capped_boundaries
+
         for row in phrase_boundaries:
             idx = row["bar_index"]
             row["time_s"] = float(bars[idx])
@@ -208,6 +255,9 @@ class GlobalStructureFusion:
         phrase_indices = sorted({int(x["bar_index"]) for x in phrase_boundaries})
 
         # Sections are authoritative only after cross-stem fusion.
+        if n_bars < self.min_section_bars:
+            section_boundaries = []
+            section_indices = []
         section_cuts = [0] + [i for i in section_indices if 0 < i < n_bars] + [n_bars]
         sections: List[Dict[str, Any]] = []
         for i, (start_bar, end_bar) in enumerate(
@@ -289,6 +339,10 @@ class GlobalStructureFusion:
             "section_support": section_support.tolist(),
             "phrase_boundaries": phrase_boundaries,
             "section_boundaries": section_boundaries,
+            "section_constraints": {
+                "min_bars": self.min_section_bars,
+                "max_bars": self.max_section_bars,
+            },
             "phrases": phrases,
             "sections": sections,
             "notes": [
