@@ -4,16 +4,14 @@
 Architecture:
     source mix -> Beat This! canonical beat/downbeat grid
                -> Demucs stems
-               -> independent AWM analysis per stem
-               -> stem-local objects/tracking/grouping/structure
-               -> stem-local Essentia timbre evidence
-               -> beat/bar/phrase/section novelty diagnostics
+               -> independent stem-local physical/evidence analysis
+               -> cross-stem global phrase/section fusion
+               -> global musical structure
 
-The mix is used for beat tracking only. It is not passed through the AWM
-physical/object/EDM analysis pipeline. Every Demucs stem gets its own
-WorldState, physical analysis, object tracking, masking, relationships,
-grouping, rhythm context, timbre, roles, elements, patterns, sections, and
-arrangement. All stem worlds share the source-track Beat This! clock.
+Stem analysis produces observations and structural evidence. It does not
+declare a stem-local phrase or section to be the final musical structure.
+Dropouts are stem-local transition subtypes. Phrase and section boundaries are
+fused across stems on the shared source-track Beat This! clock.
 """
 from __future__ import annotations
 
@@ -28,6 +26,7 @@ import matplotlib.pyplot as plt
 import edm_reverse_daw_core as _core
 from edm_quality_control import clean_foundation_patterns, correct_groove, refresh_style
 from edm_novelty_structure import BeatBarPhraseSectionNovelty
+from edm_global_structure import GlobalStructureFusion
 from edm_stems_first_pipeline import (
     align_stems_to_beats,
     attach_pipeline_state,
@@ -297,7 +296,7 @@ def analyze_one_stem(stem_name, stem_audio, sample_rate, beat_grid, args, origin
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the complete EDM reverse-DAW pipeline independently on every Demucs stem."
+        description="Run stem-local perception/evidence, then fuse global musical structure across Demucs stems."
     )
     parser.add_argument("audio", nargs="?", default=None)
     parser.add_argument("--export-json", default=None)
@@ -346,8 +345,42 @@ def main():
             original_audio=audio,
         )
 
+    global_structure = None
+    if beat_grid is not None and results:
+        usable_novelty = [
+            data.get("novelty_structure")
+            for data in results.values()
+            if data.get("novelty_structure") and not data["novelty_structure"].get("plot_skipped")
+        ]
+        if usable_novelty:
+            bar_times = usable_novelty[0].get("bar_boundaries", [])
+            fusion = GlobalStructureFusion(
+                phrase_threshold=0.42,
+                section_threshold=0.48,
+                phrase_min_support=0.25,
+                section_min_support=0.25,
+                section_refractory_bars=4,
+            )
+            global_plot = Path(args.plot_dir) / "global_musical_structure.png"
+            json_base = Path(args.export_json) if args.export_json else Path(args.plot_dir) / "novelty_structure.json"
+            global_json = json_base.with_suffix("")
+            global_json = global_json.parent / f"{global_json.name}_global_structure.json"
+            global_structure = fusion.fuse_and_export(
+                results,
+                beat_grid.beats,
+                bar_times,
+                global_plot,
+                global_json,
+            )
+            print(
+                f"\n[GLOBAL] structure: phrases={len(global_structure.get('phrases', []))} "
+                f"sections={len(global_structure.get('sections', []))} "
+                f"stems_fused={global_structure.get('stem_count', 0)}"
+            )
+            print(f"[GLOBAL] structure plot={global_plot}")
+
     result = {
-        "version": "stems-first-1",
+        "version": "stems-first-2",
         "architecture": {
             "beat_source": "full_source_mix",
             "beat_tracker": "Beat This!",
@@ -356,9 +389,12 @@ def main():
             "object_detection": False,
             "independent_stem_worlds": True,
             "shared_beat_grid": beat_grid.as_dict() if beat_grid is not None else None,
-            "novelty_structure": "beat_bar_phrase_section_v1",
+            "stem_structure": "local_evidence_only",
+            "global_structure": "cross_stem_phrase_section_fusion",
+            "novelty_structure": "beat_bar_transition_dropout_phrase_evidence_v2",
         },
         "source": {"duration_s": duration, "sample_rate": params.sample_rate},
+        "global_structure": global_structure,
         "stems": {
             name: {
                 "snapshot": data["snapshot"],
