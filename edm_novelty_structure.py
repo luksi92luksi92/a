@@ -5,21 +5,26 @@ The global Beat This! clock is authoritative.  This module is intentionally
 audio/structure-first and does not require sound-object detection.
 
 Per-stem analysis includes:
-- stem-specific audible/silence/noise thresholds;
+- stem-specific audible/activity/noise evidence;
 - no plot for an empty or inaudible/noise-only stem;
 - normalized FFT display with stem name and RMS volume relative to the
   original mix;
-- pause and transition beat/bar functional segments;
-- phrase/section spans aligned to the global bar/beat grid;
+- dropout and transition beat/bar functional segments;
+- phrase/section boundary evidence aligned to the global bar/beat grid;
 - 10-dimension functional-segment similarity with a >6/10 match rule;
 - shared segment-group colors across every plot row;
 - beat/bar similarity rows;
 - early/late segment start/end offsets measured in beats from bar boundaries;
 - volume per beat, syncopation evidence, and melody/f0 evidence.
 
-The similarity system compares complete non-silent functional segments.  It
+The similarity system compares complete non-dropout functional segments. It
 resamples beat-level evidence to a common length so phrase/section duration
 variation and small beat-pattern differences do not prevent matching.
+
+A dropout is a local reduction of one stem's energy relative to that stem's
+recent active baseline. It is not treated as a musical pause or as an
+authoritative phrase/section boundary. Final musical phrases and sections are
+fused across stems by the stems-first runner.
 """
 from __future__ import annotations
 
@@ -82,7 +87,7 @@ class BeatBarPhraseSectionNovelty:
         "#6a3d9a", "#ff7f00", "#b15928", "#33a02c", "#cab2d6",
         "#fdbf6f", "#a6cee3", "#8dd3c7", "#bebada", "#fccde5",
     ]
-    PAUSE_COLOR = "#bdbdbd"
+    DROPOUT_COLOR = "#f46d43"
     TRANSITION_COLOR = "#f46d43"
     BEAT_COLOR = "#aaaaaa"
     BAR_COLOR = "#444444"
@@ -105,6 +110,7 @@ class BeatBarPhraseSectionNovelty:
         noise_flatness: float = 0.94,
         noise_dynamic_db: float = 7.0,
         transition_threshold: float = 0.60,
+        dropout_relative_db: float = -10.0,
         similarity_threshold: float = 0.60,
         similarity_dimensions_required: int = 7,
     ) -> None:
@@ -123,6 +129,7 @@ class BeatBarPhraseSectionNovelty:
         self.noise_flatness = float(noise_flatness)
         self.noise_dynamic_db = float(noise_dynamic_db)
         self.transition_threshold = float(transition_threshold)
+        self.dropout_relative_db = float(dropout_relative_db)
         self.similarity_threshold = float(similarity_threshold)
         self.similarity_dimensions_required = int(similarity_dimensions_required)
 
@@ -530,8 +537,9 @@ class BeatBarPhraseSectionNovelty:
         beat_times: np.ndarray,
         bar_times: np.ndarray,
         bar_ranges: List[Tuple[int, int]],
-        beat_silent: np.ndarray,
+        beat_dropout: np.ndarray,
         beat_transition: np.ndarray,
+        bar_nov: np.ndarray,
         section_boundaries_idx: Sequence[int],
         phrase_candidates: Sequence[NoveltyCandidate],
         frame_times: np.ndarray,
@@ -541,7 +549,13 @@ class BeatBarPhraseSectionNovelty:
         n_bars = len(bar_ranges)
         segments: List[Dict[str, Any]] = []
 
-        def classify_run(start_bar: int, end_bar: int, kind: str, reason: str) -> None:
+        def classify_run(
+            start_bar: int,
+            end_bar: int,
+            kind: str,
+            reason: str,
+            subtype: str | None = None,
+        ) -> None:
             if end_bar <= start_bar or not bar_ranges:
                 return
             start_t, end_t, b0, b1 = self._segment_bounds_for_bars(start_bar, end_bar, bar_ranges, beat_times)
@@ -563,6 +577,7 @@ class BeatBarPhraseSectionNovelty:
             segments.append({
                 "segment_id": f"seg_{len(segments):04d}",
                 "kind": kind,
+                "subtype": subtype,
                 "reason": reason,
                 "start_bar": int(nominal_start_bar),
                 "end_bar": int(nominal_end_bar),
@@ -581,24 +596,36 @@ class BeatBarPhraseSectionNovelty:
                 "similarity_dimensions": 0,
             })
 
-        bar_pause = np.asarray(
+        bar_dropout = np.asarray(
             [
-                bool(np.all(beat_silent[s:e])) if e > s else True
+                bool(np.all(beat_dropout[s:e])) if e > s else False
                 for s, e in bar_ranges
             ],
             dtype=bool,
         )
         bar_transition = np.asarray(
             [
-                bool(np.any(beat_transition[s:e])) if e > s else False
-                for s, e in bar_ranges
+                bool(
+                    np.any(beat_transition[s:e])
+                    or (
+                        i < len(bar_nov)
+                        and float(bar_nov[i]) >= self.transition_threshold
+                    )
+                ) if e > s else False
+                for i, (s, e) in enumerate(bar_ranges)
             ],
             dtype=bool,
         )
 
-        # Beat-granularity pause/transition spans are kept as functional
-        # segments too.  These never enter complete-segment similarity grouping.
-        def classify_beat_run(start_beat: int, end_beat: int, kind: str, reason: str) -> None:
+        # Beat-granularity dropout/transition spans are kept as functional
+        # segments. Dropout is a transition subtype, not a musical pause.
+        def classify_beat_run(
+            start_beat: int,
+            end_beat: int,
+            kind: str,
+            reason: str,
+            subtype: str | None = None,
+        ) -> None:
             if end_beat <= start_beat:
                 return
             start_t = float(beat_times[start_beat])
@@ -608,6 +635,7 @@ class BeatBarPhraseSectionNovelty:
             segments.append({
                 "segment_id": f"seg_{len(segments):04d}",
                 "kind": kind,
+                "subtype": subtype,
                 "grain": "beat",
                 "reason": reason,
                 "start_bar": int(start_beat // max(self.beats_per_bar, 1)),
@@ -627,18 +655,24 @@ class BeatBarPhraseSectionNovelty:
             })
 
         i = 0
-        while i < len(beat_silent):
-            if not beat_silent[i]:
+        while i < len(beat_dropout):
+            if not beat_dropout[i]:
                 i += 1
                 continue
             j = i + 1
-            while j < len(beat_silent) and beat_silent[j]:
+            while j < len(beat_dropout) and beat_dropout[j]:
                 j += 1
-            classify_beat_run(i, j, "pause", "beat below audible threshold")
+            classify_beat_run(
+                i,
+                j,
+                "transition",
+                "stem-local energy dropout",
+                subtype="dropout",
+            )
             i = j
 
         i = 0
-        active_transition = np.logical_and(beat_transition, np.logical_not(beat_silent))
+        active_transition = np.logical_and(beat_transition, np.logical_not(beat_dropout))
         while i < len(active_transition):
             if not active_transition[i]:
                 i += 1
@@ -646,19 +680,31 @@ class BeatBarPhraseSectionNovelty:
             j = i + 1
             while j < len(active_transition) and active_transition[j]:
                 j += 1
-            classify_beat_run(i, j, "transition", "beat-scale novelty/energy transition")
+            classify_beat_run(
+                i,
+                j,
+                "transition",
+                "beat-scale novelty/energy transition",
+                subtype="novelty",
+            )
             i = j
 
-        # First-class pauses: continuous silent bars are their own functional spans.
+        # Continuous dropout bars are their own transition segments.
         i = 0
         while i < n_bars:
-            if not bar_pause[i]:
+            if not bar_dropout[i]:
                 i += 1
                 continue
             j = i + 1
-            while j < n_bars and bar_pause[j]:
+            while j < n_bars and bar_dropout[j]:
                 j += 1
-            classify_run(i, j, "pause", "stem below audible threshold")
+            classify_run(
+                i,
+                j,
+                "transition",
+                "stem-local energy dropout",
+                subtype="dropout",
+            )
             i = j
 
         # Active material is split by novelty section boundaries and transition bars.
@@ -666,7 +712,7 @@ class BeatBarPhraseSectionNovelty:
         for idx in section_boundaries_idx:
             cuts.add(int(max(0, min(n_bars, idx))))
         for idx in range(n_bars):
-            if bar_pause[idx]:
+            if bar_dropout[idx]:
                 cuts.add(idx)
                 cuts.add(idx + 1)
             if bar_transition[idx]:
@@ -677,10 +723,19 @@ class BeatBarPhraseSectionNovelty:
         for a, b in zip(cuts[:-1], cuts[1:]):
             if b <= a:
                 continue
-            if np.all(bar_pause[a:b]):
+            if np.all(bar_dropout[a:b]):
                 continue
             if np.any(bar_transition[a:b]):
-                classify_run(a, b, "transition", "novelty/energy change on transition bar")
+                subtype = "novelty"
+                if np.any(bar_dropout[a:b]):
+                    subtype = "mixed"
+                classify_run(
+                    a,
+                    b,
+                    "transition",
+                    "novelty/energy change on transition bar",
+                    subtype=subtype,
+                )
             else:
                 classify_run(a, b, "section", "active functional span")
 
@@ -692,8 +747,6 @@ class BeatBarPhraseSectionNovelty:
             for length in self.phrase_lengths:
                 p_start = p_end - int(length)
                 if p_start < 0 or p_end > n_bars:
-                    continue
-                if np.any(bar_pause[p_start:p_end]):
                     continue
                 classify_run(p_start, p_end, "phrase", f"{length}-bar phrase boundary evidence")
                 break
@@ -793,6 +846,10 @@ class BeatBarPhraseSectionNovelty:
             s for s in segments
             if s.get("grain") == "bar"
             and s["kind"] in ("phrase", "section", "transition")
+            and not (
+                s["kind"] == "transition"
+                and s.get("subtype") == "dropout"
+            )
             and s["end_beat"] > s["start_beat"]
         ]
         signatures = [
@@ -1002,7 +1059,19 @@ class BeatBarPhraseSectionNovelty:
         beat_volume = self._aggregate_scalar(
             frame_rms, frame_times, beats, max(period * 0.45, 0.05)
         )
-        beat_silent = beat_volume < (10.0 ** (stats["threshold_dbfs"] / 20.0))
+        beat_volume_db = self._running_db(beat_volume)
+        beat_baseline_db = np.full_like(beat_volume_db, -120.0)
+        lookback_beats = max(2, self.context_bars * self.beats_per_bar)
+        for i in range(len(beat_volume_db)):
+            lo = max(0, i - lookback_beats)
+            reference = beat_volume_db[lo:i]
+            beat_baseline_db[i] = float(np.median(reference)) if reference.size else float(beat_volume_db[i])
+        # A dropout requires an active local baseline and a relative reduction;
+        # it is deliberately softer than an absolute-silence test.
+        beat_dropout = (
+            (beat_baseline_db >= stats["threshold_dbfs"] + 6.0)
+            & (beat_volume_db <= beat_baseline_db + self.dropout_relative_db)
+        )
         beat_nov = self._normalize01(
             0.65 * self._local_change(beat_F, 1)
             + 0.35 * self._self_similarity_novelty(beat_F, 2)
@@ -1113,8 +1182,9 @@ class BeatBarPhraseSectionNovelty:
             beats,
             bar_times,
             bar_ranges,
-            beat_silent,
+            beat_dropout,
             beat_nov >= self.transition_threshold,
+            bar_nov,
             section_bounds,
             phrase_candidates,
             frame_times,
@@ -1207,6 +1277,8 @@ class BeatBarPhraseSectionNovelty:
             "bar_times": bar_times,
             "phrase_candidates": phrase_candidates,
             "section_candidates": selected_sections,
+            "phrase_candidates_scope": "local_evidence",
+            "section_candidates_scope": "local_evidence",
             "similarity_pairs": similarity_pairs,
             "beat_volume_pct_original": np.asarray(result.beat_volume_pct_original, dtype=float),
             "bar_volume_pct_original": np.asarray(result.bar_volume_pct_original, dtype=float),
@@ -1214,6 +1286,10 @@ class BeatBarPhraseSectionNovelty:
             "melody_midi": beat_melody,
             "functional_segments": functional_segments,
             "segment_groups": segment_groups,
+            "beat_dropout": beat_dropout,
+            "bar_dropout": bar_dropout,
+            "phrase_evidence_scope": "stem_local",
+            "section_evidence_scope": "stem_local",
             "duration_s": float(len(x) / self.sample_rate),
             "stem_stats": stats,
             "skip_plot": not stats["has_audible_content"],
@@ -1351,6 +1427,20 @@ class BeatBarPhraseSectionNovelty:
         if section_nov.size:
             ax_nov.plot(t_bar[:len(section_nov)], section_nov, color=self.SECTION_COLOR, linewidth=1.2, alpha=0.72)
 
+        beat_dropout = np.asarray(plot_data.get("beat_dropout", []), dtype=bool)
+        if beat_dropout.size:
+            for i in range(min(len(t_beat), len(beat_dropout))):
+                if not beat_dropout[i]:
+                    continue
+                end_t = float(t_beat[i + 1]) if i + 1 < len(t_beat) else float(t_beat[i])
+                ax_nov.axvspan(
+                    float(t_beat[i]),
+                    end_t,
+                    color=self.DROPOUT_COLOR,
+                    alpha=0.08,
+                    linewidth=0,
+                )
+
         # Keep the original structural annotation style on the novelty row.
         for idx, cand in enumerate(plot_data.get("phrase_candidates", [])):
             if not cand.selected:
@@ -1360,7 +1450,7 @@ class BeatBarPhraseSectionNovelty:
             ax_nov.text(
                 t,
                 0.92,
-                f"PHRASE {idx + 1}",
+                f"LOCAL PHRASE EVIDENCE {idx + 1}",
                 transform=ax_nov.get_xaxis_transform(),
                 color=self.PHRASE_COLOR,
                 rotation=90,
@@ -1375,7 +1465,7 @@ class BeatBarPhraseSectionNovelty:
             ax_nov.text(
                 t,
                 0.98,
-                f"SECTION {idx + 1}",
+                f"LOCAL SECTION EVIDENCE {idx + 1}",
                 transform=ax_nov.get_xaxis_transform(),
                 color=self.SECTION_COLOR,
                 rotation=90,
@@ -1405,20 +1495,25 @@ class BeatBarPhraseSectionNovelty:
             ax_fft.axvline(float(t), color=self.BAR_COLOR, alpha=0.18, linewidth=0.55)
             ax_nov.axvline(float(t), color=self.BAR_COLOR, alpha=0.16, linewidth=0.55)
 
-        # All functional segment boundaries extend through the whole plot.
-        # Matched segments use their pair color; unmatched phrase/section/transition
-        # spans use the regular structural colors.
+        # Functional segment boundaries are local stem evidence. Dropouts are
+        # transition subtypes and are shown directly rather than treated as pauses.
         for seg in plot_data["functional_segments"]:
             if seg.get("grain") != "bar":
                 continue
-            if seg["kind"] == "pause":
-                continue
             color = self._segment_color(seg)
             if seg["kind"] == "transition":
-                color = self.TRANSITION_COLOR
+                color = self.DROPOUT_COLOR if seg.get("subtype") == "dropout" else self.TRANSITION_COLOR
             for t in (float(seg["start_time_s"]), float(seg["end_time_s"])):
                 for ax in axes:
                     ax.axvline(t, color=color, alpha=0.16, linewidth=0.65)
+            if seg["kind"] == "transition" and seg.get("subtype") == "dropout":
+                ax_nov.axvspan(
+                    float(seg["start_time_s"]),
+                    float(seg["end_time_s"]),
+                    color=self.DROPOUT_COLOR,
+                    alpha=0.10,
+                    linewidth=0,
+                )
 
         # Similarity rows: one bar-score row per accepted segment pair.
         # Bars are drawn at their actual source-segment time positions so the rows
@@ -1625,11 +1720,14 @@ class BeatBarPhraseSectionNovelty:
         payload["plot_skipped"] = bool(plot_data.get("skip_plot"))
         payload["plot_skip_reason"] = str(plot_data.get("skip_reason", ""))
         payload["object_detection"] = "not used by novelty analyzer"
+        payload["phrase_boundary_evidence"] = payload["phrase_spans"]
+        payload["section_boundary_evidence"] = payload["section_spans"]
         payload["notes"] = [
             "Beat and bar positions are locked to the global Beat This! grid.",
-            "Functional similarity compares complete non-silent segments using 10 beat-sequence dimensions.",
+            "Phrase and section candidates in this payload are stem-local evidence, not final musical structure.",
+            "Functional similarity compares complete non-dropout segments using 10 beat-sequence dimensions.",
             "Every direct pair with 7/10 through 10/10 matching dimensions is retained; no best-pair selection is performed.",
-            "Pause/silence segments are excluded from similarity matching.",
+            "Dropouts are transition subtypes and are excluded from complete-segment similarity matching.",
             "Bar and beat comparisons use the same global Beat This! grid and normalized within-segment positions.",
             "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
             "Pair rows are repeated as needed so different accepted pairs do not visually overwrite one another.",
