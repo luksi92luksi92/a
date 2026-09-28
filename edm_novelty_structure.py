@@ -782,11 +782,12 @@ class BeatBarPhraseSectionNovelty:
         beat_melody: np.ndarray,
         beat_novelty: np.ndarray,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Find every direct complete-segment match above the >6/10 rule.
+        """Find every direct complete-segment match above the >6/11 rule.
 
-        No best-pair selection is made. Every direct pair with 7..10 matching
-        dimensions is retained. A stable color is assigned to each pair for the
-        pair-comparison rows. Segments may participate in multiple pairs.
+        No best-pair selection is made. Every direct pair with at least seven
+        matching dimensions is retained. A stable color is assigned to each
+        pair for the source-segment similarity rows. Segments may participate
+        in multiple pairs.
         """
         eligible = [
             s for s in segments
@@ -1460,11 +1461,6 @@ class BeatBarPhraseSectionNovelty:
                     start = float(t_bar[ai])
                     if ai + 1 < len(t_bar):
                         width = float(t_bar[ai + 1] - t_bar[ai])
-                    elif ai < len(bar_ranges):
-                        width = float(
-                            (beat_times := np.asarray(plot_data["beat_times"], dtype=float))
-                            [bar_ranges[ai][1] - 1] - beat_times[bar_ranges[ai][0]]
-                        ) if bar_ranges[ai][1] > bar_ranges[ai][0] else 0.0
                     else:
                         width = float(np.median(np.diff(t_bar))) if len(t_bar) > 1 else 0.0
                     width = max(width, 1e-4)
