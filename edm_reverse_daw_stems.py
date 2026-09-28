@@ -135,8 +135,8 @@ def _run_novelty(stem_name, x, sample_rate, beat_grid, args, original_audio=None
         fft_size=2048,
         hop_size=512,
         context_bars=1,
-        min_section_bars=4,
-        section_refractory_bars=2,
+        min_section_bars=16,
+        section_refractory_bars=16,
         section_threshold=0.48,
         silence_dbfs=-60.0,
         inaudible_relative_db=-48.0,
@@ -359,7 +359,9 @@ def main():
                 section_threshold=0.48,
                 phrase_min_support=0.25,
                 section_min_support=0.25,
-                section_refractory_bars=4,
+                section_refractory_bars=16,
+                min_section_bars=16,
+                max_section_bars=128,
             )
             global_plot = Path(args.plot_dir) / "global_musical_structure.png"
             json_base = Path(args.export_json) if args.export_json else Path(args.plot_dir) / "novelty_structure.json"
