@@ -460,11 +460,11 @@ class GlobalStructureFusion:
         structure = self.fuse(stem_results, beat_times, bar_times)
         if structure.get("status") == "ok":
             self.plot(structure, output_plot)
+        structure["plot_path"] = str(output_plot) if structure.get("status") == "ok" else None
+        structure["json_path"] = str(output_json)
         Path(output_json).parent.mkdir(parents=True, exist_ok=True)
         Path(output_json).write_text(
             json.dumps(structure, indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        structure["plot_path"] = str(output_plot) if structure.get("status") == "ok" else None
-        structure["json_path"] = str(output_json)
         return structure
