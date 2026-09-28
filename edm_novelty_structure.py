@@ -591,7 +591,7 @@ class BeatBarPhraseSectionNovelty:
                 "start_offset_beats_from_bar": float(start_offset),
                 "end_offset_beats_from_bar": float(end_offset),
                 "group_id": None,
-                "group_color": self.PAUSE_COLOR if kind == "pause" else self.TRANSITION_COLOR if kind == "transition" else None,
+                "group_color": self.DROPOUT_COLOR if subtype == "dropout" else self.TRANSITION_COLOR if kind == "transition" else None,
                 "similarity_score": 0.0,
                 "similarity_dimensions": 0,
             })
@@ -1092,6 +1092,13 @@ class BeatBarPhraseSectionNovelty:
         bar_nov = self._normalize01(
             0.55 * self._local_change(bar_F, 1)
             + 0.45 * self._self_similarity_novelty(bar_F, 1)
+        )
+        bar_dropout = np.asarray(
+            [
+                bool(np.all(beat_dropout[s:e])) if e > s else False
+                for s, e in bar_ranges
+            ],
+            dtype=bool,
         )
         beat_sync = self._syncopation(x, beats, period)
         beat_melody = self._melody_track(
