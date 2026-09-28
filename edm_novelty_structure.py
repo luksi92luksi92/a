@@ -649,7 +649,7 @@ class BeatBarPhraseSectionNovelty:
                 "start_offset_beats_from_bar": 0.0,
                 "end_offset_beats_from_bar": 0.0,
                 "group_id": None,
-                "group_color": self.PAUSE_COLOR if kind == "pause" else self.TRANSITION_COLOR,
+                "group_color": self.DROPOUT_COLOR if subtype == "dropout" else self.TRANSITION_COLOR if kind == "transition" else None,
                 "similarity_score": 0.0,
                 "similarity_dimensions": 0,
             })
