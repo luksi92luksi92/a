@@ -14,7 +14,13 @@ torchaudio
 # Role-specific melody / note transcription
 # CREPE F0 tracking for bass; Basic Pitch polyphonic transcription for mixed/other stem.
 torchcrepe
-basic-pitch
+# Basic Pitch is installed separately with --no-deps because its published
+# metadata pins TensorFlow/resampy ranges that conflict with current Colab.
+onnxruntime
+mir_eval
+pretty_midi
+scikit-learn
+resampy==0.4.2
 IPython
 
 # Canonical full-mix beat/downbeat tracking
