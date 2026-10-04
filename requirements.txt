@@ -10,6 +10,11 @@ soundfile
 librosa
 torch
 torchaudio
+
+# Role-specific melody / note transcription
+# CREPE F0 tracking for bass; Basic Pitch polyphonic transcription for mixed/other stem.
+torchcrepe
+basic-pitch
 IPython
 
 # Canonical full-mix beat/downbeat tracking
