@@ -34,6 +34,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
+from edm_melody import detect_stem_melody
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -70,6 +72,8 @@ class NoveltyStructureResult:
     bar_volume_pct_original: List[float]
     beat_syncopation: List[float]
     melody_midi: List[float]
+    melody_note_events: List[Dict[str, Any]]
+    melody_detector: Dict[str, Any]
     beat_similarity: List[float]
     bar_similarity: List[float]
     stem_stats: Dict[str, Any]
@@ -459,30 +463,6 @@ class BeatBarPhraseSectionNovelty:
             "empty": bool(empty),
             "noise_only_or_inaudible": bool(noise_only),
         }
-
-    def _melody_track(self, audio: np.ndarray, beat_times: np.ndarray, beat_period: float, beat_volume: np.ndarray, threshold_rms: float) -> np.ndarray:
-        try:
-            import librosa
-            f0 = librosa.yin(
-                np.asarray(audio, dtype=np.float32),
-                fmin=55.0,
-                fmax=min(2200.0, self.sample_rate * 0.45),
-                sr=self.sample_rate,
-                frame_length=self.fft_size,
-                hop_length=self.hop_size,
-            )
-            times = librosa.times_like(f0, sr=self.sample_rate, hop_length=self.hop_size)
-            midi = 69.0 + 12.0 * np.log2(np.maximum(f0, 1e-6) / 440.0)
-            out = np.zeros(len(beat_times), dtype=float)
-            for i, t in enumerate(beat_times):
-                idx = np.where(np.abs(times - t) <= max(beat_period * 0.45, 0.05))[0]
-                vals = midi[idx] if idx.size else np.zeros(0)
-                valid = vals[np.isfinite(vals)]
-                if valid.size and beat_volume[i] >= threshold_rms:
-                    out[i] = float(np.median(valid))
-            return out
-        except Exception:
-            return np.zeros(len(beat_times), dtype=float)
 
     def _syncopation(self, audio: np.ndarray, beat_times: np.ndarray, beat_period: float) -> np.ndarray:
         if len(beat_times) == 0:
@@ -1105,13 +1085,23 @@ class BeatBarPhraseSectionNovelty:
             dtype=bool,
         )
         beat_sync = self._syncopation(x, beats, period)
-        beat_melody = self._melody_track(
+        melody = detect_stem_melody(
+            stem_name,
             x,
+            self.sample_rate,
             beats,
-            period,
-            beat_volume,
-            10.0 ** (stats["threshold_dbfs"] / 20.0),
         )
+        beat_melody = np.asarray(melody.get("beat_midi", np.zeros(len(beats))), dtype=float)
+        melody_note_events = list(melody.get("note_events", []))
+        melody_detector = {
+            "detector": str(melody.get("detector", "unknown")),
+            "voicing_gate": str(melody.get("voicing_gate", "")),
+            "polyphonic": bool(melody.get("polyphonic", False)),
+            "raw_frame_count": int(melody.get("raw_frame_count", 0)),
+            "raw_voiced_frames": int(melody.get("raw_voiced_frames", 0)),
+        }
+        if melody.get("fallback_reason"):
+            melody_detector["fallback_reason"] = str(melody["fallback_reason"])
 
         phrase_nov = np.zeros(max(len(bar_F), 1), dtype=float)
         phrase_spans: List[Dict[str, Any]] = []
@@ -1271,6 +1261,8 @@ class BeatBarPhraseSectionNovelty:
             ),
             beat_syncopation=beat_sync.tolist(),
             melody_midi=beat_melody.tolist(),
+            melody_note_events=melody_note_events,
+            melody_detector=melody_detector,
             beat_similarity=beat_sim.tolist(),
             bar_similarity=bar_sim.tolist(),
             stem_stats=stats,
@@ -1295,6 +1287,8 @@ class BeatBarPhraseSectionNovelty:
             "bar_volume_pct_original": np.asarray(result.bar_volume_pct_original, dtype=float),
             "beat_syncopation": beat_sync,
             "melody_midi": beat_melody,
+            "melody_note_events": melody_note_events,
+            "melody_detector": melody_detector,
             "functional_segments": functional_segments,
             "segment_groups": segment_groups,
             "beat_dropout": beat_dropout,
@@ -1657,14 +1651,22 @@ class BeatBarPhraseSectionNovelty:
         melody = np.asarray(plot_data["melody_midi"], dtype=float)
         voiced = melody > 0.0
         if melody.size and np.any(voiced):
-            ax_melody.plot(
-                t_beat[voiced],
-                melody[voiced],
-                color="#2c7fb8",
-                linewidth=1.8,
-                marker=".",
-                markersize=3,
-            )
+            voiced_idx = np.flatnonzero(voiced)
+            if len(voiced_idx):
+                diffs = np.diff(t_beat[voiced_idx]) if len(voiced_idx) > 1 else np.zeros(0)
+                base_step = float(np.median(np.diff(t_beat))) if len(t_beat) > 1 else 0.5
+                split_at = np.flatnonzero(diffs > (1.5 * max(base_step, 1e-6)))
+                runs = np.split(voiced_idx, split_at + 1) if len(split_at) else [voiced_idx]
+                for run in runs:
+                    if len(run):
+                        ax_melody.plot(
+                            t_beat[run],
+                            melody[run],
+                            color="#2c7fb8",
+                            linewidth=1.8,
+                            marker=".",
+                            markersize=3,
+                        )
             ax_melody.set_ylim(
                 max(20.0, float(np.min(melody[voiced]) - 3.0)),
                 min(120.0, float(np.max(melody[voiced]) + 3.0)),
@@ -1743,6 +1745,9 @@ class BeatBarPhraseSectionNovelty:
             "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
             "Pair rows are repeated as needed so different accepted pairs do not visually overwrite one another.",
             "Plot FFT is peak-normalized for readability; the title reports stem RMS as a percentage of original-mix RMS.",
+            "Melody detection is role-specific: CREPE for bass, Basic Pitch for the polyphonic other stem, pYIN for vocals, and disabled for drums.",
+            "Melody acceptance is no longer based on the stem RMS/activity threshold; each detector uses pitch-specific evidence or note activations.",
+            f"Melody detector used: {payload.get('melody_detector', {}).get('detector', 'unknown')}.",
         ]
         if not plot_data.get("skip_plot"):
             self.plot(plot_data, output_path, f"{stem_name}")
