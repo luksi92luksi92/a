@@ -351,35 +351,152 @@ def stereo_context(audio: np.ndarray) -> Dict[str, Any]:
     width = float(np.sqrt(np.mean(side.astype(float)**2)) / max(np.sqrt(np.mean(mid.astype(float)**2)), 1e-9))
     return {"available": True, "mean_width_ratio": float(np.clip(width, 0, 2)), "interpretation": "wide" if width > 0.55 else "centered"}
 
+
+def _spectral_stats(audio: np.ndarray, sample_rate: int, start: float, end: float) -> Dict[str, float]:
+    x=np.asarray(audio,dtype=np.float32).reshape(-1)
+    center=int(round(((start+end)*0.5)*sample_rate))
+    n=int(max(1024,min(8192,round(max(0.08,min(0.50,end-start))*sample_rate))))
+    a=max(0,center-n//2); b=min(len(x),a+n); seg=x[a:b]
+    if len(seg)<256:
+        return {"centroid_hz":0.0,"flatness":1.0,"flux":0.0}
+    spec=np.abs(np.fft.rfft(seg*np.hanning(len(seg))))
+    freq=np.fft.rfftfreq(len(seg),1.0/sample_rate)
+    power=spec**2+1e-12
+    centroid=float(np.sum(freq*power)/np.sum(power))
+    flat=float(np.exp(np.mean(np.log(spec+1e-9)))/max(np.mean(spec),1e-9))
+    edge=max(0,int(0.20*len(spec)))
+    low=float(np.sum(spec[:edge]))
+    high=float(np.sum(spec[-edge:])) if edge else 0.0
+    flux=float(np.clip(high/max(low+high,1e-9),0.0,1.0))
+    return {"centroid_hz":centroid,"flatness":flat,"flux":flux}
+
+def _annotate_event_audio_evidence(audio: np.ndarray, sample_rate: int, events: Sequence[Dict[str, Any]]) -> None:
+    for ev in events:
+        stats=_spectral_stats(audio,sample_rate,float(ev["start_time_s"]),float(ev["end_time_s"]))
+        ev["spectral_centroid_hz"]=float(stats["centroid_hz"])
+        ev["spectral_flatness"]=float(stats["flatness"])
+        ev["attack_brightness"]=float(stats["flux"])
+        ev["onset_class"] = (
+            "transient" if ev.get("duration_s",0.0)<=0.18 and stats["flux"]>=0.18
+            else "pluck_or_short" if ev.get("duration_s",0.0)<=0.35
+            else "sustain"
+        )
+        # Two temporal resolutions: short window emphasizes attack, longer
+        # window emphasizes stable harmonic support.
+        short_support=float(ev.get("spectral_support",0.0))
+        long_support=_pitch_support_long(audio,sample_rate,float(ev["start_time_s"]),float(ev["end_time_s"]),int(ev["pitch_midi"]))
+        ev["multi_resolution_pitch_support"]={"short_window":short_support,"long_window":long_support,
+                                               "combined":float(0.55*short_support+0.45*long_support)}
+
+def _pitch_support_long(audio: np.ndarray, sample_rate: int, start: float, end: float, midi: int) -> float:
+    x=np.asarray(audio,dtype=np.float32).reshape(-1)
+    f0=440.0*(2.0**((int(midi)-69)/12.0))
+    center=int(round(((start+end)*0.5)*sample_rate))
+    n=int(max(4096,min(16384,round(max(0.20,min(1.50,end-start))*sample_rate))))
+    a=max(0,center-n//2); b=min(len(x),a+n); seg=x[a:b]
+    if len(seg)<512 or f0<=0: return 0.0
+    spec=np.abs(np.fft.rfft(seg*np.hanning(len(seg))))
+    freq=np.fft.rfftfreq(len(seg),1.0/sample_rate)
+    total=float(np.sum(spec[(freq>=40)&(freq<=4000)])+1e-9)
+    vals=[]; weights=[]
+    for h in range(1,5):
+        f=f0*h
+        if f>4000: break
+        idx=np.abs(freq-f)<=max(2.0,0.015*f)
+        if np.any(idx):
+            vals.append(float(np.max(spec[idx]))); weights.append(1.0/h)
+    if not vals: return 0.0
+    return float(np.clip((np.average(vals,weights=weights)/total)*24.0,0.0,1.0))
+
+def _add_timbre_continuity(events: Sequence[Dict[str, Any]]) -> None:
+    ordered=sorted(events,key=lambda e:float(e["start_time_s"]))
+    for i,ev in enumerate(ordered):
+        if i==0:
+            ev["timbre_continuity"]=0.5
+            continue
+        prev=ordered[i-1]
+        dc=abs(float(ev.get("spectral_centroid_hz",0.0))-float(prev.get("spectral_centroid_hz",0.0)))
+        df=abs(float(ev.get("spectral_flatness",0.0))-float(prev.get("spectral_flatness",0.0)))
+        ev["timbre_continuity"]=float(np.clip(np.exp(-dc/1800.0)*(1.0-df),0.0,1.0))
+
+def _call_response(lead: Sequence[Dict[str, Any]], beat_times: np.ndarray) -> List[Dict[str, Any]]:
+    if len(lead)<8: return []
+    starts=np.asarray([float(e["start_time_s"]) for e in lead])
+    pitches=np.asarray([int(e["pitch_midi"]) for e in lead])
+    beat=float(np.median(np.diff(beat_times))) if len(beat_times)>1 else 0.5
+    out=[]
+    # Compare adjacent phrase-sized groups by interval contour and leave a
+    # response gap of roughly half a beat to eight beats.
+    for n in (4,5,6,8):
+        for i in range(len(pitches)-2*n+1):
+            a=pitches[i:i+n]-pitches[i]
+            for j in range(i+n,len(pitches)-n+1):
+                gap=starts[j]-starts[i+n-1]
+                if gap < 0.5*beat or gap > 8*beat: continue
+                b=pitches[j:j+n]-pitches[j]
+                sim=1.0-min(1.0,float(np.mean(np.abs(a-b)))/12.0)
+                if sim>=0.72:
+                    out.append({"call_start_time_s":float(starts[i]),"call_end_time_s":float(starts[i+n-1]),
+                                "response_start_time_s":float(starts[j]),"response_end_time_s":float(starts[j+n-1]),
+                                "length_notes":int(n),"score":float(sim),"role":"call_response"})
+                    break
+    return out[:64]
+
+def _octave_equivalent_motifs(lead: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if len(lead)<8: return []
+    pcs=[int(e["pitch_midi"])%12 for e in lead]
+    starts=[float(e["start_time_s"]) for e in lead]
+    out=[]
+    for n in (4,5,6,8):
+        for i in range(len(pcs)-2*n+1):
+            a=np.asarray(pcs[i:i+n])
+            for j in range(i+n,len(pcs)-n+1):
+                b=np.asarray(pcs[j:j+n])
+                sim=1.0-min(1.0,float(np.mean(np.minimum(np.abs(a-b),12-np.abs(a-b))))/6.0)
+                if sim>=0.85:
+                    out.append({"start_time_s":float(starts[i]),"repeat_time_s":float(starts[j]),"length_notes":int(n),"score":float(sim),"role":"octave_equivalent_motif"})
+                    break
+    return out[:64]
+
 def analyze_other_music(audio: np.ndarray, sample_rate: int, beat_times: np.ndarray, events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    x = np.asarray(audio)
-    mono = np.mean(x, axis=0) if x.ndim == 2 and x.shape[0] == 2 else (np.mean(x, axis=1) if x.ndim == 2 and x.shape[1] == 2 else x.reshape(-1))
-    key = estimate_key_context(mono, sample_rate, np.asarray(beat_times, dtype=float))
-    enriched = enrich_events(mono, sample_rate, events, key)
-    enriched, chords = infer_chords(enriched, key)
-    lead = infer_lead(enriched)
-    counter = infer_counter(enriched, lead)
-    arps = infer_arpeggios(enriched, chords)
-    lead_keys = {(round(float(e["start_time_s"]),3), int(e["pitch_midi"])) for e in lead}
-    counter_keys = {(round(float(e["start_time_s"]),3), int(e["pitch_midi"])) for e in counter}
-    chord_keys = {(round(float(e["start_time_s"]),3), int(e["pitch_midi"])) for e in enriched if e.get("chord_memberships")}
-    one_shots = [dict(e) for e in enriched if (round(float(e["start_time_s"]),3), int(e["pitch_midi"])) not in lead_keys and float(e["duration_s"]) <= 0.18 and not e.get("chord_memberships")]
+    x=np.asarray(audio)
+    mono=np.mean(x,axis=0) if x.ndim==2 and x.shape[0]==2 else (np.mean(x,axis=1) if x.ndim==2 and x.shape[1]==2 else x.reshape(-1))
+    beats=np.asarray(beat_times,dtype=float)
+    key=estimate_key_context(mono,sample_rate,beats)
+    enriched=enrich_events(mono,sample_rate,events,key)
+    _annotate_event_audio_evidence(mono,sample_rate,enriched)
+    _add_timbre_continuity(enriched)
+    enriched,chords=infer_chords(enriched,key)
+    lead=infer_lead(enriched)
+    # Re-score the lead after timbre/audio evidence is available.
+    for ev in lead:
+        ev["lead_score"]=float(np.clip(0.75*ev.get("lead_score",0.0)+0.25*ev.get("timbre_continuity",0.5),0,1))
+    counter=infer_counter(enriched,lead)
+    arps=infer_arpeggios(enriched,chords)
+    lead_keys={(round(float(e["start_time_s"]),3),int(e["pitch_midi"])) for e in lead}
+    counter_keys={(round(float(e["start_time_s"]),3),int(e["pitch_midi"])) for e in counter}
+    chord_keys={(round(float(e["start_time_s"]),3),int(e["pitch_midi"])) for e in enriched if e.get("chord_memberships")}
+    one_shots=[dict(e) for e in enriched if (round(float(e["start_time_s"]),3),int(e["pitch_midi"])) not in lead_keys and float(e["duration_s"])<=0.18 and not e.get("chord_memberships")]
     for e in enriched:
-        k = (round(float(e["start_time_s"]),3), int(e["pitch_midi"]))
-        e["inferred_role"] = "lead" if k in lead_keys else "counter_melody" if k in counter_keys else "chord_tone" if k in chord_keys else "ornament_or_one_shot" if float(e["duration_s"]) <= 0.18 else "supporting_pitch"
-    pads = [c for c in chords if c["role"] == "pad"]; stabs = [c for c in chords if c["role"] == "stab"]
+        k=(round(float(e["start_time_s"]),3),int(e["pitch_midi"]))
+        e["inferred_role"]="lead" if k in lead_keys else "counter_melody" if k in counter_keys else "chord_tone" if k in chord_keys else "ornament_or_one_shot" if float(e["duration_s"])<=0.18 else "supporting_pitch"
+    pads=[c for c in chords if c["role"]=="pad"]; stabs=[c for c in chords if c["role"]=="stab"]
+    motifs=infer_motifs(lead,beats)
     return {
-        "analysis_version": "edm-musical-input-v1",
-        "key_context": key,
-        "chord_events": chords,
-        "lead_events": lead,
-        "counter_melody_events": counter,
-        "arpeggio_events": arps,
-        "pad_events": pads,
-        "stab_events": stabs,
-        "one_shot_events": one_shots,
-        "motifs": infer_motifs(lead, np.asarray(beat_times, dtype=float)),
-        "sidechain": sidechain_evidence(mono, sample_rate, np.asarray(beat_times, dtype=float)),
-        "stereo_context": stereo_context(x),
-        "all_note_events": enriched,
+        "analysis_version":"edm-musical-input-v2",
+        "key_context":key,
+        "chord_events":chords,
+        "lead_events":lead,
+        "counter_melody_events":counter,
+        "arpeggio_events":arps,
+        "pad_events":pads,
+        "stab_events":stabs,
+        "one_shot_events":one_shots,
+        "motifs":motifs,
+        "octave_equivalent_motifs":_octave_equivalent_motifs(lead),
+        "call_response_events":_call_response(lead,beats),
+        "sidechain":sidechain_evidence(mono,sample_rate,beats),
+        "stereo_context":stereo_context(x),
+        "pitch_representation":{"detector":"Basic Pitch","interpretation":"multi-resolution spectral validation","scale_prior":"soft key/scale","voice_tracking":"Viterbi-style lead continuity"},
+        "all_note_events":enriched,
     }
