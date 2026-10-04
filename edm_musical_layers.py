@@ -22,6 +22,14 @@ CHORD_TEMPLATES = {
     "maj7": (0, 4, 7, 11), "min7": (0, 3, 7, 10),
 }
 
+def _midi_parts(midi: Any) -> Tuple[int, int, str]:
+    try:
+        value = int(round(float(midi)))
+    except Exception:
+        value = 0
+    pc = int(value % 12)
+    return value, pc, NOTE_NAMES[pc]
+
 def _name_pc(pc: int) -> str:
     return NOTE_NAMES[int(pc) % 12]
 
@@ -174,15 +182,16 @@ def enrich_events(audio: np.ndarray, sample_rate: int, events: Sequence[Dict[str
     out = []
     for ev in events:
         row = dict(ev)
-        start = float(row["start_time_s"]); end = float(row["end_time_s"]); pitch = int(row["pitch_midi"])
+        start = float(row["start_time_s"]); end = float(row["end_time_s"]); pitch, pitch_class, pitch_name = _midi_parts(row["pitch_midi"])
         dur = max(0.0, end - start)
         support = _pitch_support(audio, sample_rate, start, end, pitch)
         k = _local_key((start + end) * 0.5, key_context)
         fit = key_fit(pitch, k)
         register = float(np.clip((pitch - 48.0) / 36.0, 0.0, 1.0))
+        row["pitch_midi"] = pitch
         row.update({
-            "pitch_name": f"{NOTE_NAMES[pitch % 12]}{pitch // 12 - 1}",
-            "pitch_class": pitch % 12,
+            "pitch_name": f"{pitch_name}{pitch // 12 - 1}",
+            "pitch_class": pitch_class,
             "duration_s": dur,
             "duration_class": _duration_class(dur),
             "spectral_support": support,
