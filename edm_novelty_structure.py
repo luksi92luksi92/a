@@ -1654,7 +1654,78 @@ class BeatBarPhraseSectionNovelty:
 
         melody = np.asarray(plot_data["melody_midi"], dtype=float)
         voiced = melody > 0.0
-        if melody.size and np.any(voiced):
+        layers = plot_data.get("music_layers", {}) or {}
+        is_other = bool(layers) and str(title).strip().lower() == "other"
+
+        if is_other:
+            chord_events = list(layers.get("chord_events", []))
+            lead_events = list(layers.get("lead_events", []))
+            counter_events = list(layers.get("counter_melody_events", []))
+            arp_events = list(layers.get("arpeggio_events", []))
+
+            for chord in chord_events:
+                ax_melody.axvspan(
+                    float(chord["start_time_s"]),
+                    float(chord["end_time_s"]),
+                    color="#999999",
+                    alpha=0.10,
+                    linewidth=0,
+                )
+                ax_melody.text(
+                    0.5 * (float(chord["start_time_s"]) + float(chord["end_time_s"])),
+                    118.0,
+                    f'{chord.get("root","?")} {chord.get("quality","")}',
+                    ha="center",
+                    va="top",
+                    fontsize=6.5,
+                    color="#555555",
+                    clip_on=True,
+                )
+
+            def _plot_events(events, color, label, linewidth=1.8, marker="o"):
+                if not events:
+                    return
+                x = [0.5 * (float(e["start_time_s"]) + float(e["end_time_s"])) for e in events]
+                y = [float(e["pitch_midi"]) for e in events]
+                ax_melody.plot(
+                    x, y, color=color, linewidth=linewidth,
+                    marker=marker, markersize=3.2, label=label,
+                )
+
+            _plot_events(lead_events, "#2166ac", "LEAD", linewidth=2.2, marker="o")
+            _plot_events(counter_events, "#e08214", "COUNTER", linewidth=1.5, marker="s")
+
+            for arp in arp_events:
+                xs = np.linspace(
+                    float(arp["start_time_s"]),
+                    float(arp["end_time_s"]),
+                    max(2, len(arp.get("pitch_midi", []))),
+                )
+                ys = [float(v) for v in arp.get("pitch_midi", [])]
+                if ys:
+                    ax_melody.plot(
+                        xs[:len(ys)], ys, color="#1b7837",
+                        linewidth=1.0, marker="^", markersize=2.5, alpha=0.80,
+                    )
+
+            all_pitches = []
+            for ev in lead_events + counter_events:
+                all_pitches.append(float(ev["pitch_midi"]))
+            for ev in arp_events:
+                all_pitches.extend(float(v) for v in ev.get("pitch_midi", []))
+            for ev in chord_events:
+                all_pitches.extend(float(v) for v in ev.get("notes", []))
+
+            if all_pitches:
+                ax_melody.set_ylim(
+                    max(20.0, min(all_pitches) - 3.0),
+                    min(120.0, max(all_pitches) + 3.0),
+                )
+            else:
+                ax_melody.set_ylim(30.0, 90.0)
+
+            ax_melody.legend(loc="upper left", fontsize=7, ncol=3, frameon=False)
+        elif melody.size and np.any(voiced):
             voiced_idx = np.flatnonzero(voiced)
             if len(voiced_idx):
                 diffs = np.diff(t_beat[voiced_idx]) if len(voiced_idx) > 1 else np.zeros(0)
@@ -1664,12 +1735,8 @@ class BeatBarPhraseSectionNovelty:
                 for run in runs:
                     if len(run):
                         ax_melody.plot(
-                            t_beat[run],
-                            melody[run],
-                            color="#2c7fb8",
-                            linewidth=1.8,
-                            marker=".",
-                            markersize=3,
+                            t_beat[run], melody[run],
+                            color="#2c7fb8", linewidth=1.8, marker=".", markersize=3,
                         )
             ax_melody.set_ylim(
                 max(20.0, float(np.min(melody[voiced]) - 3.0)),
@@ -1677,17 +1744,12 @@ class BeatBarPhraseSectionNovelty:
             )
         else:
             ax_melody.text(
-                0.5,
-                0.5,
-                "no stable pitch evidence",
-                transform=ax_melody.transAxes,
-                ha="center",
-                va="center",
-                fontsize=8,
-                color="#666666",
+                0.5, 0.5, "no stable pitch evidence",
+                transform=ax_melody.transAxes, ha="center", va="center",
+                fontsize=8, color="#666666",
             )
             ax_melody.set_ylim(30.0, 90.0)
-        ax_melody.set_ylabel("MELODY / MIDI")
+        ax_melody.set_ylabel("MUSICAL LAYERS / MIDI" if is_other else "MELODY / MIDI")
 
         for ax in axes:
             ax.grid(axis="y", alpha=0.12, linewidth=0.5)
