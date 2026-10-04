@@ -1,0 +1,337 @@
+{
+  "arrangement": null,
+  "elements": {},
+  "object_metadata": {},
+  "parameters": [
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "element_similarity_threshold",
+      "owner": "ElementEngine",
+      "unit": "score",
+      "value": 0.62
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "element_merge_hysteresis",
+      "owner": "ElementEngine",
+      "unit": "score",
+      "value": 0.05
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "element_min_members",
+      "owner": "ElementEngine",
+      "unit": "count",
+      "value": 2
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "element_max_members",
+      "owner": "ElementEngine",
+      "unit": "count",
+      "value": 256
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "element_max_families",
+      "owner": "ElementEngine",
+      "unit": "count",
+      "value": 64
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "bar_match_threshold",
+      "owner": "PatternEngine",
+      "unit": "score",
+      "value": 0.72
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "pattern_min_bars",
+      "owner": "PatternEngine",
+      "unit": "count",
+      "value": 2
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "pattern_max_period_bars",
+      "owner": "PatternEngine",
+      "unit": "bars",
+      "value": 16
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "pattern_similarity_tolerance",
+      "owner": "PatternEngine",
+      "unit": "distance",
+      "value": 0.12
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 1,
+      "name": "section_min_bars",
+      "owner": "StructureEngine",
+      "unit": "bars",
+      "value": 4
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "section_novelty_threshold",
+      "owner": "StructureEngine",
+      "unit": "distance",
+      "value": 0.33
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": null,
+      "minimum": 0,
+      "name": "section_refractory_bars",
+      "owner": "StructureEngine",
+      "unit": "bars",
+      "value": 2
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "section_silence_threshold",
+      "owner": "StructureEngine",
+      "unit": "relative_energy",
+      "value": 0.08
+    },
+    {
+      "classification": "DEFAULT",
+      "maximum": 1,
+      "minimum": 0,
+      "name": "arrangement_confidence_floor",
+      "owner": "ArrangementEngine",
+      "unit": "score",
+      "value": 0.45
+    },
+    {
+      "classification": "TUNABLE",
+      "maximum": null,
+      "minimum": 0,
+      "name": "timing_tolerance_ms",
+      "owner": "EDMReverseDAW",
+      "unit": "ms",
+      "value": 35.0
+    }
+  ],
+  "patterns": {},
+  "sections": [
+    {
+      "density_mean": 0.0,
+      "end_bar": 3,
+      "end_time": 7.67999999999995,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 0.0,
+      "section_id": "section_8632117a",
+      "start_bar": 0,
+      "start_time": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 7,
+      "end_time": 15.3599999999999,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_ae2e2bfa",
+      "start_bar": 4,
+      "start_time": 7.67999999999995,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 11,
+      "end_time": 23.03999999999985,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_3fc5a213",
+      "start_bar": 8,
+      "start_time": 15.3599999999999,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 15,
+      "end_time": 30.7199999999998,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_02abfc64",
+      "start_bar": 12,
+      "start_time": 23.03999999999985,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 19,
+      "end_time": 38.39999999999975,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_732f9d90",
+      "start_bar": 16,
+      "start_time": 30.7199999999998,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 23,
+      "end_time": 46.0799999999997,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 4.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_12c0c587",
+      "start_bar": 20,
+      "start_time": 38.39999999999975,
+      "status": "ACTIVE"
+    },
+    {
+      "density_mean": 0.0,
+      "end_bar": 26,
+      "end_time": 51.221333333333334,
+      "energy_mean": 0.0,
+      "evidence": {
+        "bar_count": 3.0,
+        "element_count": 0.0,
+        "fx_activity": 0.0,
+        "low_end": 0.0,
+        "pattern_count": 0.0
+      },
+      "label_candidates": {
+        "break": 0.25,
+        "breakdown": 0.25,
+        "build": 0.0,
+        "drop": 0.0,
+        "intro": 0.25,
+        "outro": 0.25,
+        "post-drop": 0.0
+      },
+      "novelty_score": 1.0,
+      "section_id": "section_efdbc68b",
+      "start_bar": 24,
+      "start_time": 46.0799999999997,
+      "status": "ACTIVE"
+    }
+  ],
+  "source_hypotheses": {},
+  "time": 51.221333333333334,
+  "version": "0.1.0"
+}
