@@ -1749,8 +1749,10 @@ class BeatBarPhraseSectionNovelty:
             "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
             "Pair rows are repeated as needed so different accepted pairs do not visually overwrite one another.",
             "Plot FFT is peak-normalized for readability; the title reports stem RMS as a percentage of original-mix RMS.",
-            "Melody detection is role-specific: CREPE for bass, Basic Pitch for the polyphonic other stem, pYIN for vocals, and disabled for drums.",
+            "Melody detection is role-specific: CREPE for bass, Basic Pitch plus EDM musical interpretation for the other stem, pYIN for vocals, and disabled for drums.",
             "Melody acceptance is no longer based on the stem RMS/activity threshold; each detector uses pitch-specific evidence or note activations.",
+            "The other stem exports key/scale context, chord events, lead, counter-melody, arpeggios, pads, stabs, one-shots, motifs, call/response, octave-equivalent motifs, pitch-expression and spectral/timbre evidence.",
+            "Key/scale information is a soft prior; out-of-scale notes are allowed when acoustic/model evidence supports them.",
             f"Melody detector used: {payload.get('melody_detector', {}).get('detector', 'unknown')}.",
         ]
         if not plot_data.get("skip_plot"):
