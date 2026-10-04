@@ -257,8 +257,6 @@ def detect_bass_crepe(
         device=device,
         return_periodicity=True,
         decoder=torchcrepe.decode.viterbi,
-        pad=True,
-        return_batched=True,
     )
     pitch = np.asarray(pitch[0].detach().cpu().numpy(), dtype=float)
     periodicity = np.asarray(periodicity[0].detach().cpu().numpy(), dtype=float)
