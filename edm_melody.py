@@ -22,6 +22,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
 
+from edm_musical_layers import analyze_other_music
+
 
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
@@ -421,17 +423,28 @@ def detect_other_basic_pitch(
             }
         )
 
+    music_layers = analyze_other_music(
+        np.asarray(audio, dtype=np.float32),
+        int(sample_rate),
+        np.asarray(beat_times, dtype=float),
+        events,
+    )
+    enriched_events = list(music_layers.get("all_note_events", events))
+    lead_events = list(music_layers.get("lead_events", []))
+
     beat_midi = _stabilize_midi_sequence(
-        _note_events_to_beat_track(np.asarray(beat_times), events)
+        _note_events_to_beat_track(np.asarray(beat_times), lead_events or enriched_events)
     )
     return {
-        "detector": "basic_pitch_polyphonic",
-        "voicing_gate": "Basic Pitch onset/frame activation",
+        "detector": "basic_pitch_polyphonic_plus_edm_interpretation",
+        "voicing_gate": "Basic Pitch onset/frame activation + pitch/spectral/musical evidence",
         "beat_midi": beat_midi,
-        "note_events": events,
+        "note_events": enriched_events,
         "raw_frame_count": 0,
         "raw_voiced_frames": len(events),
         "polyphonic": True,
+        "music_layers": music_layers,
+        "all_note_events": enriched_events,
     }
 
 
