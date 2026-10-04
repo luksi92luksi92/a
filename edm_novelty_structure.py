@@ -74,6 +74,7 @@ class NoveltyStructureResult:
     melody_midi: List[float]
     melody_note_events: List[Dict[str, Any]]
     melody_detector: Dict[str, Any]
+    music_layers: Dict[str, Any]
     beat_similarity: List[float]
     bar_similarity: List[float]
     stem_stats: Dict[str, Any]
@@ -1102,6 +1103,7 @@ class BeatBarPhraseSectionNovelty:
         }
         if melody.get("fallback_reason"):
             melody_detector["fallback_reason"] = str(melody["fallback_reason"])
+        music_layers = dict(melody.get("music_layers", {}))
 
         phrase_nov = np.zeros(max(len(bar_F), 1), dtype=float)
         phrase_spans: List[Dict[str, Any]] = []
@@ -1263,6 +1265,7 @@ class BeatBarPhraseSectionNovelty:
             melody_midi=beat_melody.tolist(),
             melody_note_events=melody_note_events,
             melody_detector=melody_detector,
+            music_layers=music_layers,
             beat_similarity=beat_sim.tolist(),
             bar_similarity=bar_sim.tolist(),
             stem_stats=stats,
@@ -1289,6 +1292,7 @@ class BeatBarPhraseSectionNovelty:
             "melody_midi": beat_melody,
             "melody_note_events": melody_note_events,
             "melody_detector": melody_detector,
+            "music_layers": music_layers,
             "functional_segments": functional_segments,
             "segment_groups": segment_groups,
             "beat_dropout": beat_dropout,
