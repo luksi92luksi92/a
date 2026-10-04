@@ -423,12 +423,31 @@ def detect_other_basic_pitch(
             }
         )
 
-    music_layers = analyze_other_music(
-        np.asarray(audio, dtype=np.float32),
-        int(sample_rate),
-        np.asarray(beat_times, dtype=float),
-        events,
-    )
+    try:
+        music_layers = analyze_other_music(
+            np.asarray(audio, dtype=np.float32),
+            int(sample_rate),
+            np.asarray(beat_times, dtype=float),
+            events,
+        )
+    except Exception as exc:
+        # Musical interpretation is enrichment; preserve the raw polyphonic
+        # transcription if a downstream heuristic fails.
+        music_layers = {
+            "analysis_version": "edm-musical-input-failed-soft",
+            "error": repr(exc),
+            "all_note_events": list(events),
+            "lead_events": [],
+            "chord_events": [],
+            "counter_melody_events": [],
+            "arpeggio_events": [],
+            "pad_events": [],
+            "stab_events": [],
+            "one_shot_events": [],
+            "motifs": [],
+            "octave_equivalent_motifs": [],
+            "call_response_events": [],
+        }
     enriched_events = list(music_layers.get("all_note_events", events))
     lead_events = list(music_layers.get("lead_events", []))
 
