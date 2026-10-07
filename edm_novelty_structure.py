@@ -1666,24 +1666,31 @@ class BeatBarPhraseSectionNovelty:
             lead_events = list(layers.get("lead_events", []))
             counter_events = list(layers.get("counter_melody_events", []))
             arp_events = list(layers.get("arpeggio_events", []))
+            backend_note_events = dict(layers.get("backend_note_events", {}) or {})
+
+            # Raw multi-track transcription evidence.
+            backend_styles = [
+                ("YourMT3+", "#756bb1", 0.24, "RAW MT3"),
+                ("MuScriptor", "#41ab5d", 0.24, "RAW MS"),
+            ]
+            for backend_name, color, alpha, short_label in backend_styles:
+                events = list(backend_note_events.get(backend_name, []) or [])
+                if not events:
+                    continue
+                x = [0.5 * (float(e["start_time_s"]) + float(e["end_time_s"])) for e in events]
+                y = [float(e["pitch_midi"]) for e in events]
+                ax_melody.scatter(
+                    x, y, s=11, color=color, alpha=alpha,
+                    marker=".", label=short_label, zorder=1,
+                )
 
             for chord in chord_events:
                 ax_melody.axvspan(
                     float(chord["start_time_s"]),
                     float(chord["end_time_s"]),
                     color="#999999",
-                    alpha=0.10,
+                    alpha=0.08,
                     linewidth=0,
-                )
-                ax_melody.text(
-                    0.5 * (float(chord["start_time_s"]) + float(chord["end_time_s"])),
-                    118.0,
-                    f'{chord.get("root","?")} {chord.get("quality","")}',
-                    ha="center",
-                    va="top",
-                    fontsize=6.5,
-                    color="#555555",
-                    clip_on=True,
                 )
 
             def _plot_events(events, color, label, linewidth=1.8, marker="o"):
@@ -1719,16 +1726,28 @@ class BeatBarPhraseSectionNovelty:
                 all_pitches.extend(float(v) for v in ev.get("pitch_midi", []))
             for ev in chord_events:
                 all_pitches.extend(float(v) for v in ev.get("notes", []))
+            for events in backend_note_events.values():
+                for ev in events:
+                    if "pitch_midi" in ev:
+                        all_pitches.append(float(ev["pitch_midi"]))
 
             if all_pitches:
-                ax_melody.set_ylim(
-                    max(20.0, min(all_pitches) - 3.0),
-                    min(120.0, max(all_pitches) + 3.0),
-                )
+                y_lo = max(20.0, min(all_pitches) - 3.0)
+                y_hi = min(120.0, max(all_pitches) + 3.0)
+                ax_melody.set_ylim(y_lo, y_hi)
+                label_y = y_hi - 0.8
+                for chord in chord_events:
+                    mid_t = 0.5 * (float(chord["start_time_s"]) + float(chord["end_time_s"]))
+                    label = f'{chord.get("root","?")} {chord.get("quality","")}'
+                    ax_melody.text(
+                        mid_t, label_y, label,
+                        ha="center", va="top", fontsize=6.2,
+                        color="#555555", clip_on=True,
+                    )
             else:
                 ax_melody.set_ylim(30.0, 90.0)
 
-            ax_melody.legend(loc="upper left", fontsize=7, ncol=3, frameon=False)
+            ax_melody.legend(loc="upper left", fontsize=6.7, ncol=5, frameon=False)
         elif melody.size and np.any(voiced):
             voiced_idx = np.flatnonzero(voiced)
             if len(voiced_idx):
@@ -1815,7 +1834,7 @@ class BeatBarPhraseSectionNovelty:
             "Each accepted pair has its own color and dedicated BAR/BEAT rows; boundary lines use the same pair color through the full plot stack.",
             "Pair rows are repeated as needed so different accepted pairs do not visually overwrite one another.",
             "Plot FFT is peak-normalized for readability; the title reports stem RMS as a percentage of original-mix RMS.",
-            "Melody detection is role-specific: CREPE for bass, Basic Pitch plus EDM musical interpretation for the other stem, pYIN for vocals, and disabled for drums.",
+            "Melody detection is role-specific: CREPE for bass, YourMT3+ plus MuScriptor multitrack transcription for the other stem, pYIN for vocals, and disabled for drums.",
             "Melody acceptance is no longer based on the stem RMS/activity threshold; each detector uses pitch-specific evidence or note activations.",
             "The other stem exports key/scale context, chord events, lead, counter-melody, arpeggios, pads, stabs, one-shots, motifs, call/response, octave-equivalent motifs, pitch-expression and spectral/timbre evidence.",
             "Key/scale information is a soft prior; out-of-scale notes are allowed when acoustic/model evidence supports them.",
