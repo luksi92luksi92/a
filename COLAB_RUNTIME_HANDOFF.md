@@ -1,66 +1,62 @@
 # Colab Runtime Handoff — Stems-First
 
-## Incident: 2026-10-07
-
-A Colab runtime was broken by running:
-
-    %cd /content/a
-    !pip uninstall -y basic-pitch
-    !pip install -U -r requirements.txt
-
-The `basic-pitch` uninstall was harmless because it was not installed.
-
-The failure came from the previous `requirements.txt`, which contained unpinned core runtime packages including `IPython`, `torch`, `numpy`, `scipy`, `matplotlib`, `librosa`, and `scikit-learn`. The `-U` install upgraded the Colab-managed environment.
-
-The observed conflicting versions were:
-
-- Colab required `IPython==7.34.0`, but pip installed `IPython==9.17.1`.
-- Colab's `moviepy` required `decorator<5.0`, while `librosa==1.0.0` pulled `decorator==5.3.1`.
-- PyTorch/CUDA packages were also replaced, including torch 2.11.0 -> 2.14.1 and multiple CUDA 13 packages.
-
-The runtime then required a restart because core packages had already been imported, and the restart was unsuccessful.
-
-## Repository fix
-
+Repository: `luksi92luksi92/a`
 Branch: `edm-stems-first`
 
-`requirements.txt` is now pinned to the known-good runtime versions from immediately before the failed upgrade.
+## 2026-10-07 Colab issues
 
-Important changes:
+### Runtime dependency incident
+The previous requirements file let pip upgrade Colab-managed packages. This caused:
+- `google-colab` / `IPython` incompatibility (`IPython 7.34.0` was replaced by `9.17.1`)
+- `moviepy` / `decorator` incompatibility
+- replacement of the existing PyTorch/CUDA stack
 
-1. `IPython` was removed entirely. The project does not import it directly.
-2. `librosa` is pinned to `0.11.0` instead of allowing `1.0.0`, avoiding the Colab/moviepy decorator conflict.
-3. Runtime-sensitive packages are pinned, including NumPy, SciPy, Matplotlib, PyTorch, TorchAudio, TorchVision, Transformers, scikit-learn, and the installed audio/ML stack.
-4. `mt3-infer` is pinned to the exact repository commit that was resolved during the successful build.
-5. The file no longer permits an ordinary `pip install -U -r requirements.txt` to silently replace the known-good runtime versions.
+Fix applied:
+- `requirements.txt` now pins the known-good dependency versions
+- `IPython` removed from project dependencies
+- `librosa` pinned to `0.11.0`
+- MT3-Infer pinned to the exact Git commit used during the successful build
 
-## Correct Colab recovery procedure
+A damaged runtime must be deleted and recreated before using the corrected requirements.
 
-Because the damaged runtime may already have incompatible packages installed, start with:
+### Transcription backend incident
+The pipeline then reached the `other`-stem transcription stage and failed for two separate reasons:
 
-1. Runtime -> Disconnect and delete runtime
-2. Start a fresh Colab runtime.
-3. Clone/checkout branch `edm-stems-first`.
-4. Run:
+1. **YourMT3+**: the model downloader uses Git LFS, but the Colab runtime did not have the `git-lfs` command.
+2. **MuScriptor**: its model weights are gated on Hugging Face and require account authorization.
 
-    %cd /content/a
-    !pip uninstall -y basic-pitch
-    !pip install -U -r requirements.txt
+Fix applied:
+- YourMT3+ is the primary polyphonic backend.
+- MuScriptor is now optional and opt-in with `EDM_MT_USE_MUSCRIPTOR=1`.
+- A single unavailable optional backend no longer aborts the run when another backend succeeds.
+- `EDM_MT_REQUIRE_ALL=1` restores strict all-backend behavior.
+- Basic Pitch remains intentionally unused.
 
-5. Because the pins match the known-good baseline, the install should leave Colab's IPython/Jupyter runtime at its expected version instead of upgrading it.
+## Fresh Colab setup requirement
 
-Do not manually upgrade `IPython`, Jupyter, `decorator`, or the CUDA/PyTorch stack after this install unless the dependency set is deliberately revalidated.
+Before running the pipeline, install Git LFS in the fresh runtime:
 
-## Current continuation state
+    !apt-get -qq update
+    !apt-get -qq install -y git-lfs
+    !git lfs install
+    !git lfs version
 
-The project being worked on is the stems-first EDM reverse-DAW pipeline in `edm-stems-first`.
+Then install the pinned requirements from the `edm-stems-first` branch.
 
-The repository is:
+The default pipeline uses YourMT3+ and does not require MuScriptor access.
 
-`luksi92luksi92/a`
+## Current state
 
-The branch name is **`edm-stems-first`**, not `stemsfirst`.
+The repository-side fixes are complete for the two failures above. The next execution should be performed from a fresh Colab runtime with Git LFS installed.
 
-The installation failure was an environment/dependency issue, not evidence that the stems-first pipeline itself is broken.
+The previous failure path was:
 
-This note is the handoff record for future conversations.
+`edm_reverse_daw.py`
+-> `edm_reverse_daw_stems.py`
+-> `edm_novelty_structure.py`
+-> `edm_melody.py`
+-> `edm_multitrack_transcription.py`
+
+The failure occurred during model checkpoint acquisition, before the actual stems-first analysis completed.
+
+This file is the continuation handoff for future conversations.
