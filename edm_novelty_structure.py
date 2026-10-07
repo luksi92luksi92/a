@@ -1103,6 +1103,10 @@ class BeatBarPhraseSectionNovelty:
         }
         if melody.get("fallback_reason"):
             melody_detector["fallback_reason"] = str(melody["fallback_reason"])
+        if melody.get("transcription_backends") is not None:
+            melody_detector["transcription_backends"] = list(melody.get("transcription_backends", []))
+        if melody.get("model_agreement_summary") is not None:
+            melody_detector["model_agreement_summary"] = dict(melody.get("model_agreement_summary", {}))
         music_layers = dict(melody.get("music_layers", {}))
 
         phrase_nov = np.zeros(max(len(bar_F), 1), dtype=float)
