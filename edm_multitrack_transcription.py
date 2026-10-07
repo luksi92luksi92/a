@@ -56,7 +56,7 @@ def _load_yourmt3():
 def _load_muscriptor():
     global _MUSCRIPTOR_MODEL
     if _MUSCRIPTOR_MODEL is None:
-        from muscriptor import TranscriptionModel
+        from muscriptor.transcription_model import TranscriptionModel
         _MUSCRIPTOR_MODEL = TranscriptionModel.load_model(device=_device())
     return _MUSCRIPTOR_MODEL
 
@@ -196,7 +196,7 @@ def _ensemble_events(
     for ev in pitched:
         best_idx = None
         best_distance = 1e9
-        for i, cluster in enumerate(clusters[-24:]):
+        for i, cluster in enumerate(clusters):
             rep = cluster[0]
             if int(rep["pitch_midi"]) != int(ev["pitch_midi"]):
                 continue
@@ -208,7 +208,7 @@ def _ensemble_events(
             if onset_distance <= 0.075 and (overlap >= -0.04 or end_distance <= 0.12):
                 score = onset_distance + 0.20 * end_distance
                 if score < best_distance:
-                    best_idx = len(clusters) - 24 + i
+                    best_idx = i
                     best_distance = score
         if best_idx is None:
             clusters.append([ev])
