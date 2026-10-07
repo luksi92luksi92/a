@@ -12,11 +12,11 @@ torch
 torchaudio
 
 # Role-specific melody / note transcription
-# CREPE F0 tracking for bass; Basic Pitch polyphonic transcription for mixed/other stem.
+# CREPE F0 tracking for bass; multi-track transcription for mixed/other stem.
 torchcrepe
-# Basic Pitch is installed separately with --no-deps because its published
-# metadata pins TensorFlow/resampy ranges that conflict with current Colab.
-onnxruntime
+mido
+mt3-infer[torch] @ git+https://github.com/openmirlab/mt3-infer.git
+muscriptor
 mir_eval
 pretty_midi
 scikit-learn
