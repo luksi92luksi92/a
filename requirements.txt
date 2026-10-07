@@ -1,37 +1,44 @@
-# Complete runtime dependency set for the stems-first EDM reverse-DAW pipeline.
+# Stable runtime dependency set for the stems-first EDM reverse-DAW pipeline.
 #
-# This is the canonical install file for Colab/local runs. Keep every
-# directly imported/required package here so new code does not introduce
-# undeclared runtime dependencies.
-numpy
-scipy
-matplotlib
-soundfile
-librosa
-torch
-torchaudio
+# IMPORTANT:
+# - Do not add IPython/Jupyter/Google Colab runtime packages here.
+# - These versions match the known-good Colab runtime immediately before
+#   the failed upgrade on 2026-10-07.
+# - Exact pins prevent "pip install -U -r requirements.txt" from replacing
+#   Colab's managed Python/GPU stack with incompatible newer versions.
+#
+# For Colab, start from a fresh runtime before installing this file.
+
+numpy==2.1.3
+scipy==1.16.3
+matplotlib==3.10.0
+soundfile==0.14.0
+librosa==0.11.0
+
+torch==2.11.0
+torchaudio==2.11.0
+torchvision==0.26.0
+transformers==5.18.0
 
 # Role-specific melody / note transcription
-# CREPE F0 tracking for bass; multi-track transcription for mixed/other stem.
-torchcrepe
-mido
-mt3-infer[torch] @ git+https://github.com/openmirlab/mt3-infer.git
-muscriptor
-mir_eval
-pretty_midi
-scikit-learn
+torchcrepe==0.0.24
+mido==1.3.3
+mt3-infer[torch] @ git+https://github.com/openmirlab/mt3-infer.git@d8cbd287470291dee335f84315c5a9b9ff6e6c8a
+muscriptor==0.3.0
+mir_eval==0.8.2
+pretty_midi==0.2.11.post0
+scikit-learn==1.6.1
 resampy==0.4.2
-IPython
 
 # Canonical full-mix beat/downbeat tracking
 beat-this==1.1.0
-tqdm
-einops
-soxr
-rotary-embedding-torch
+tqdm==4.67.3
+einops==0.8.2
+soxr==1.1.0
+rotary-embedding-torch==0.9.1
 
 # Required stem separation
-demucs
+demucs==4.1.0
 
 # Rich timbre/spectral descriptors used by the EDM reverse-DAW adapter
 essentia==2.1b6.dev1389
