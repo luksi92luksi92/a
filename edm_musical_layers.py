@@ -506,6 +506,6 @@ def analyze_other_music(audio: np.ndarray, sample_rate: int, beat_times: np.ndar
         "call_response_events":_call_response(lead,beats),
         "sidechain":sidechain_evidence(mono,sample_rate,beats),
         "stereo_context":stereo_context(x),
-        "pitch_representation":{"detector":"Basic Pitch","interpretation":"multi-resolution spectral validation","scale_prior":"soft key/scale","voice_tracking":"Viterbi-style lead continuity"},
+        "pitch_representation":{"detector":"YourMT3+ + MuScriptor ensemble","interpretation":"multi-track transcription with model-agreement fusion and multi-resolution spectral validation","scale_prior":"soft key/scale","voice_tracking":"post-transcription musical continuity"},
         "all_note_events":enriched,
     }
