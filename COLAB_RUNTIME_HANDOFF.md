@@ -60,3 +60,16 @@ The previous failure path was:
 The failure occurred during model checkpoint acquisition, before the actual stems-first analysis completed.
 
 This file is the continuation handoff for future conversations.
+
+
+## Melody plot export fix — 2026-10-07
+
+The melody/note detector was producing data, but the plotting code only embedded the melody row inside each `novelty_structure_<stem>.png`. It did not write a separate melody image.
+
+Fix applied:
+- `edm_novelty_structure.py` now writes a dedicated `melody_<stem>.png` next to the novelty plot.
+- The combined novelty JSON records `melody_plot_path` and `melody_plot_written` for each usable stem.
+- For the `other` stem, the dedicated plot includes raw YourMT3+/MuScriptor note evidence plus lead/counter/arpeggio/chord layers.
+- For monophonic roles such as bass/vocals, it plots the detected MIDI contour.
+
+After pulling the latest `edm-stems-first` branch, rerun the pipeline. Existing plots are not retroactively regenerated; the new files are created on the next successful run.
