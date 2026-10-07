@@ -1786,6 +1786,110 @@ class BeatBarPhraseSectionNovelty:
         fig.savefig(output_path, dpi=160, bbox_inches="tight")
         plt.close(fig)
 
+    def plot_melody(self, plot_data: Dict[str, Any], output_path: str, title: str) -> None:
+        """Write a dedicated melody / musical-layer plot for one stem."""
+        times = np.asarray(plot_data.get("beat_times", []), dtype=float)
+        melody = np.asarray(plot_data.get("melody_midi", []), dtype=float)
+        layers = plot_data.get("music_layers", {}) or {}
+        detector = plot_data.get("melody_detector", {}) or {}
+        is_other = str(title).strip().lower() == "other"
+
+        fig, ax = plt.subplots(figsize=(18, 6))
+        ax.set_title(
+            f"{title} — melody / musical layers | detector={detector.get('detector', 'unknown')}",
+            loc="left",
+            fontsize=12,
+            fontweight="bold",
+        )
+
+        has_data = False
+
+        if is_other:
+            backend_note_events = dict(layers.get("backend_note_events", {}) or {})
+            backend_styles = [
+                ("YourMT3+", "#756bb1", 0.28, "RAW YourMT3+"),
+                ("MuScriptor", "#41ab5d", 0.28, "RAW MuScriptor"),
+            ]
+            for backend_name, color, alpha, label in backend_styles:
+                events = list(backend_note_events.get(backend_name, []) or [])
+                if not events:
+                    continue
+                xs = [0.5 * (float(e["start_time_s"]) + float(e["end_time_s"])) for e in events]
+                ys = [float(e["pitch_midi"]) for e in events if "pitch_midi" in e]
+                xs = xs[:len(ys)]
+                if ys:
+                    ax.scatter(xs, ys, s=13, color=color, alpha=alpha, marker=".", label=label, zorder=1)
+                    has_data = True
+
+            def plot_events(events, color, label, linewidth=1.9, marker="o"):
+                nonlocal has_data
+                if not events:
+                    return
+                xs = [0.5 * (float(e["start_time_s"]) + float(e["end_time_s"])) for e in events]
+                ys = [float(e["pitch_midi"]) for e in events if "pitch_midi" in e]
+                xs = xs[:len(ys)]
+                if ys:
+                    ax.plot(xs, ys, color=color, linewidth=linewidth, marker=marker,
+                            markersize=3.2, label=label, zorder=3)
+                    has_data = True
+
+            plot_events(list(layers.get("lead_events", []) or []), "#2166ac", "LEAD", 2.2, "o")
+            plot_events(list(layers.get("counter_melody_events", []) or []), "#e08214", "COUNTER", 1.5, "s")
+
+            for arp in list(layers.get("arpeggio_events", []) or []):
+                ys = [float(v) for v in arp.get("pitch_midi", [])]
+                if not ys:
+                    continue
+                xs = np.linspace(float(arp["start_time_s"]), float(arp["end_time_s"]), len(ys))
+                ax.plot(xs, ys, color="#1b7837", linewidth=1.0, marker="^",
+                        markersize=2.8, alpha=0.85, label="ARPEGGIO")
+                has_data = True
+
+            for chord in list(layers.get("chord_events", []) or []):
+                ax.axvspan(float(chord["start_time_s"]), float(chord["end_time_s"]),
+                           color="#999999", alpha=0.08, linewidth=0)
+                if chord.get("notes"):
+                    mid_t = 0.5 * (float(chord["start_time_s"]) + float(chord["end_time_s"]))
+                    ax.text(mid_t, max(chord["notes"]) + 0.6,
+                            f'{chord.get("root", "?")} {chord.get("quality", "")}',
+                            ha="center", va="bottom", fontsize=6.5, color="#555555")
+                    has_data = True
+
+        elif melody.size and np.any(melody > 0.0):
+            voiced = melody > 0.0
+            idx = np.flatnonzero(voiced)
+            if idx.size:
+                ax.plot(times[idx], melody[idx], color="#2c7fb8",
+                        linewidth=1.9, marker=".", markersize=3, label="MELODY")
+                has_data = True
+
+        if not has_data:
+            ax.text(0.5, 0.5, "No stable melody/note evidence",
+                    transform=ax.transAxes, ha="center", va="center", fontsize=10)
+
+        beat_times = np.asarray(plot_data.get("beat_times", []), dtype=float)
+        bar_times = np.asarray(plot_data.get("bar_times", []), dtype=float)
+        for t in beat_times:
+            ax.axvline(float(t), color="#aaaaaa", alpha=0.10, linewidth=0.35)
+        for t in bar_times:
+            ax.axvline(float(t), color="#444444", alpha=0.16, linewidth=0.55)
+
+        ax.set_ylabel("MIDI pitch")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylim(
+            20.0,
+            120.0,
+        )
+        if is_other or has_data:
+            ax.legend(loc="upper left", fontsize=7, ncol=6, frameon=False)
+        ax.grid(axis="y", alpha=0.12, linewidth=0.5)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        fig.subplots_adjust(left=0.055, right=0.995, top=0.92, bottom=0.10)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+
     @staticmethod
     def _bar_times_from_index(index: int, bar_times: np.ndarray, bar_ranges: Any = None) -> Tuple[float, float]:
         i = int(index)
@@ -1844,6 +1948,13 @@ class BeatBarPhraseSectionNovelty:
             self.plot(plot_data, output_path, f"{stem_name}")
             payload["plot_written"] = True
             payload["plot_path"] = str(output_path)
+
+            melody_path = str(Path(output_path).with_name(
+                f"melody_{''.join(c if c.isalnum() or c in '-_' else '_' for c in str(stem_name))}.png"
+            ))
+            self.plot_melody(plot_data, melody_path, f"{stem_name}")
+            payload["melody_plot_written"] = True
+            payload["melody_plot_path"] = melody_path
         Path(json_path).parent.mkdir(parents=True, exist_ok=True)
         Path(json_path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return payload
