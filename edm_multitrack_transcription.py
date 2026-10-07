@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Multi-track transcription ensemble for the EDM "other" stem.
 
-Basic Pitch is intentionally not used here.  The detector combines:
-- YourMT3 (via MT3-Infer): multi-instrument / multi-track transcription
-- MuScriptor: multi-instrument transcription with explicit instrument groups
+Preferred backend:
+- YourMT3+ via MT3-Infer (public checkpoint)
 
-Both outputs are normalized into a common note-event representation, then
-deduplicated by pitch/onset evidence.  The downstream EDM musical-layer
-analysis works on the resulting polyphonic event cloud.
+Optional secondary backend:
+- MuScriptor (requires accepting its Hugging Face model license and authenticating)
+
+The pipeline is deliberately not dependent on Basic Pitch. YourMT3+ is sufficient
+to provide polyphonic note events. MuScriptor improves ensemble agreement when it
+is available, but its gated weights must not prevent the main pipeline from running.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 import os
@@ -181,14 +183,11 @@ def _cluster_key(event: Dict[str, Any]) -> Tuple[int, int]:
 def _ensemble_events(
     backend_events: Sequence[Sequence[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
-    """Fuse the two model outputs without imposing a note-count template."""
+    """Fuse available backend outputs without imposing a note-count template."""
     all_events: List[Dict[str, Any]] = []
     for events in backend_events:
         all_events.extend(dict(e) for e in events)
 
-    # Ignore model-generated drum tracks in melodic analysis, but retain them
-    # in backend diagnostics.  The "other" stem is being analyzed for pitched
-    # musical layers here.
     pitched = [e for e in all_events if str(e.get("instrument", "")).lower() != "drums"]
     pitched.sort(key=lambda e: (float(e["start_time_s"]), int(e["pitch_midi"]), float(e["end_time_s"])))
 
@@ -232,7 +231,7 @@ def _ensemble_events(
                 "pitch_hz": float(440.0 * 2.0 ** ((pitch - 69) / 12.0)),
                 "confidence": float(0.70 + 0.15 * min(agreement - 1, 1)),
                 "velocity": float(np.clip(np.mean(velocities), 0.0, 1.0)),
-                "detector": "yourmt3_plus_muscriptor_ensemble",
+                "detector": "yourmt3_plus_muscriptor_ensemble" if agreement > 1 else "yourmt3_single_backend",
                 "source_models": source_models,
                 "model_agreement": agreement,
                 "instruments": instruments,
@@ -260,19 +259,21 @@ def transcribe_other_multitrack(
     sample_rate: int,
     beat_times: np.ndarray,
 ) -> Dict[str, Any]:
-    """Run both multi-track models and return an ensemble note representation.
+    """Run available multi-track models and return a fused note representation.
 
-    No Basic Pitch fallback exists by design.  If either model fails, its error
-    is exposed explicitly.  The default is strict: both model runs are needed
-    for the ensemble to be considered complete.  Set
-    EDM_MT_ALLOW_PARTIAL=1 only for debugging when one backend is unavailable.
+    YourMT3+ is the primary backend and does not require gated model weights.
+    MuScriptor is optional because its Hugging Face checkpoint is gated.
+
+    Set EDM_MT_REQUIRE_ALL=1 only when both backends are intentionally required.
+    Set EDM_MT_DISABLE_MUSCRIPTOR=1 to skip the optional gated backend entirely.
     """
     backend_results: List[Tuple[str, List[Dict[str, Any]], str | None]] = []
 
-    for backend_name, fn in (
-        ("YourMT3+", transcribe_yourmt3),
-        ("MuScriptor", transcribe_muscriptor),
-    ):
+    backends = [("YourMT3+", transcribe_yourmt3)]
+    if os.getenv("EDM_MT_DISABLE_MUSCRIPTOR", "0") != "1":
+        backends.append(("MuScriptor", transcribe_muscriptor))
+
+    for backend_name, fn in backends:
         try:
             events = fn(np.asarray(audio, dtype=np.float32), int(sample_rate))
             backend_results.append((backend_name, events, None))
@@ -280,25 +281,36 @@ def transcribe_other_multitrack(
             backend_results.append((backend_name, [], repr(exc)))
 
     failures = [name for name, _, err in backend_results if err]
-    if failures and os.getenv("EDM_MT_ALLOW_PARTIAL", "0") != "1":
+    successful = [(name, events) for name, events, err in backend_results if err is None]
+
+    if os.getenv("EDM_MT_REQUIRE_ALL", "0") == "1" and failures:
         joined = "; ".join(f"{name}: {err}" for name, _, err in backend_results if err)
         raise RuntimeError(
-            "Multi-track transcription failed for "
-            + ", ".join(failures)
-            + ". No Basic Pitch fallback is enabled. "
+            "Required multi-track transcription backend failed: "
             + joined
-            + ". For MuScriptor, authenticate to Hugging Face and accept its model license."
         )
 
-    events_by_backend = [events for _, events, err in backend_results if err is None]
+    events_by_backend = [events for _, events in successful]
     if not events_by_backend:
-        raise RuntimeError("Neither multi-track transcription backend returned notes.")
+        joined = "; ".join(f"{name}: {err}" for name, _, err in backend_results if err)
+        raise RuntimeError(
+            "No multi-track transcription backend is available. "
+            "Install Git LFS for YourMT3+ and/or authenticate to Hugging Face "
+            "for MuScriptor. Details: " + joined
+        )
 
     ensemble_events = _ensemble_events(events_by_backend)
+    detector = (
+        "yourmt3_plus_muscriptor_ensemble"
+        if len(events_by_backend) >= 2
+        else "yourmt3_single_backend"
+        if successful[0][0] == "YourMT3+"
+        else "muscriptor_single_backend"
+    )
 
     return {
-        "detector": "yourmt3_plus_muscriptor_ensemble",
-        "voicing_gate": "multi-track model decoding; note evidence from independent transcription backends",
+        "detector": detector,
+        "voicing_gate": "multi-track model decoding; available backend evidence",
         "polyphonic": True,
         "note_events": ensemble_events,
         "all_note_events": ensemble_events,
@@ -310,11 +322,15 @@ def transcribe_other_multitrack(
         "backend_note_events": {
             name: events for name, events, err in backend_results if err is None
         },
+        "backend_failures": {
+            name: err for name, _, err in backend_results if err is not None
+        },
         "model_agreement_summary": {
             "fused_notes": int(len(ensemble_events)),
             "notes_supported_by_both_models": int(
                 sum(1 for e in ensemble_events if int(e.get("model_agreement", 0)) >= 2)
             ),
+            "successful_backend_count": int(len(successful)),
         },
     }
 
