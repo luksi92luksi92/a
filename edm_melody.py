@@ -419,7 +419,12 @@ def detect_other_multitrack(
         "raw_frame_count": 0,
         "raw_voiced_frames": int(result.get("raw_voiced_frames", len(enriched_events))),
         "polyphonic": True,
-        "music_layers": music_layers,
+        "music_layers": {
+            **music_layers,
+            "transcription_backends": result.get("transcription_backends", []),
+            "model_agreement_summary": result.get("model_agreement_summary", {}),
+            "backend_note_events": result.get("backend_note_events", {}),
+        },
     }
 
 def detect_stem_melody(
