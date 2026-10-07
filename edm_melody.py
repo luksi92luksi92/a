@@ -357,72 +357,25 @@ def detect_vocal_pyin(
     }
 
 
-def detect_other_basic_pitch(
+def detect_other_multitrack(
     audio: np.ndarray,
     sample_rate: int,
     beat_times: np.ndarray,
 ) -> Dict[str, Any]:
-    """Polyphonic transcription for the residual/other stem."""
-    try:
-        import soundfile as sf
-        from basic_pitch import ICASSP_2022_MODEL_PATH
-        from basic_pitch.inference import predict
-    except Exception as exc:
-        # Keep the pipeline runnable when the optional transcriber is absent.
-        # The caller receives an explicit fallback marker rather than silently
-        # pretending that no melody exists.
-        try:
-            fallback = detect_vocal_pyin(audio, sample_rate, beat_times)
-        except Exception:
-            fallback = {
-                "beat_midi": np.zeros(len(beat_times), dtype=float),
-                "note_events": [],
-                "raw_frame_count": 0,
-                "raw_voiced_frames": 0,
-            }
-        fallback["detector"] = "pyin_fallback_basic_pitch_unavailable"
-        fallback["fallback_reason"] = repr(exc)
-        return fallback
+    """Multi-instrument transcription for the residual/other stem.
 
-    temp_path = None
-    try:
-        fd, temp_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-        sf.write(temp_path, np.asarray(audio, dtype=np.float32), int(sample_rate))
-        _, _, note_events = predict(
-            temp_path,
-            ICASSP_2022_MODEL_PATH,
-            onset_threshold=0.45,
-            frame_threshold=0.25,
-            minimum_note_length=70.0,
-            minimum_frequency=50.0,
-            maximum_frequency=2000.0,
-            multiple_pitch_bends=True,
-            melodia_trick=True,
-        )
-    finally:
-        if temp_path:
-            try:
-                Path(temp_path).unlink()
-            except Exception:
-                pass
+    This intentionally uses YourMT3+ and MuScriptor rather than Basic Pitch.
+    Their independent outputs are fused before EDM musical-layer inference.
+    """
+    from edm_multitrack_transcription import transcribe_other_multitrack
 
-    events: List[Dict[str, Any]] = []
-    for start, end, pitch, amplitude, pitch_bends in note_events:
-        midi_pitch = int(round(float(pitch)))
-        events.append(
-            {
-                "start_time_s": float(start),
-                "end_time_s": float(end),
-                "pitch_midi": midi_pitch,
-                "pitch_hz": float(midi_to_hz(midi_pitch)),
-                "confidence": float(np.clip(amplitude, 0.0, 1.0)),
-                "velocity": float(np.clip(amplitude, 0.0, 1.0)),
-                "pitch_bends": [int(v) for v in (pitch_bends or [])],
-                "detector": "basic_pitch",
-            }
-        )
+    result = transcribe_other_multitrack(
+        np.asarray(audio, dtype=np.float32),
+        int(sample_rate),
+        np.asarray(beat_times, dtype=float),
+    )
 
+    events = list(result.get("note_events", []))
     try:
         music_layers = analyze_other_music(
             np.asarray(audio, dtype=np.float32),
@@ -431,8 +384,6 @@ def detect_other_basic_pitch(
             events,
         )
     except Exception as exc:
-        # Musical interpretation is enrichment; preserve the raw polyphonic
-        # transcription if a downstream heuristic fails.
         music_layers = {
             "analysis_version": "edm-musical-input-failed-soft",
             "error": repr(exc),
@@ -448,24 +399,28 @@ def detect_other_basic_pitch(
             "octave_equivalent_motifs": [],
             "call_response_events": [],
         }
+
     enriched_events = list(music_layers.get("all_note_events", events))
     lead_events = list(music_layers.get("lead_events", []))
-
     beat_midi = _stabilize_midi_sequence(
-        _note_events_to_beat_track(np.asarray(beat_times), lead_events or enriched_events)
+        _note_events_to_beat_track(
+            np.asarray(beat_times),
+            lead_events or enriched_events,
+        )
     )
+
     return {
-        "detector": "basic_pitch_polyphonic_plus_edm_interpretation",
-        "voicing_gate": "Basic Pitch onset/frame activation + pitch/spectral/musical evidence",
+        **result,
+        "detector": "yourmt3_plus_muscriptor_ensemble",
+        "voicing_gate": "multi-track model decoding; no Basic Pitch fallback",
         "beat_midi": beat_midi,
         "note_events": enriched_events,
+        "all_note_events": enriched_events,
         "raw_frame_count": 0,
-        "raw_voiced_frames": len(events),
+        "raw_voiced_frames": int(result.get("raw_voiced_frames", len(enriched_events))),
         "polyphonic": True,
         "music_layers": music_layers,
-        "all_note_events": enriched_events,
     }
-
 
 def detect_stem_melody(
     stem_name: str,
@@ -486,7 +441,7 @@ def detect_stem_melody(
     if role == "bass":
         return detect_bass_crepe(audio, sample_rate, beat_times)
     if role == "other":
-        return detect_other_basic_pitch(audio, sample_rate, beat_times)
+        return detect_other_multitrack(audio, sample_rate, beat_times)
     if role == "vocals":
         return detect_vocal_pyin(audio, sample_rate, beat_times)
     # Unknown stems get a conservative monophonic fallback.
@@ -496,6 +451,6 @@ def detect_stem_melody(
 __all__ = [
     "detect_stem_melody",
     "detect_bass_crepe",
-    "detect_other_basic_pitch",
+    "detect_other_multitrack",
     "detect_vocal_pyin",
 ]
