@@ -4,7 +4,7 @@
 The detectors are deliberately different by stem role:
 
 - bass   -> CREPE F0 tracking + voiced confidence + semitone stabilization
-- other  -> Basic Pitch polyphonic note transcription
+- other  -> YourMT3+ + MuScriptor multitrack transcription ensemble
 - vocals -> pYIN monophonic F0 tracking
 - drums  -> melody disabled
 
